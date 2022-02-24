@@ -1,9 +1,21 @@
 [tool.poetry]
 name = "otf"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 description = "A python framework for on-the-fly distributed workflows"
 authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
 license = "CC0-1.0"
+readme = "README.md"
+repository = "https://github.com/till-varoquaux/otf"
+# https://pypi.org/classifiers/
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
+    "Programming Language :: Python",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
 
 [tool.poetry.dependencies]
 python = "^3.10"

@@ -1,4 +1,4 @@
-# On-the-fly distributed python function
+# On-the-fly distributed python workflows
 
 [![Tests](https://github.com/till-varoquaux/otf/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/till-varoquaux/otf/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/till-varoquaux/otf/branch/main/graph/badge.svg?token=ahhI117oFg)](https://codecov.io/gh/till-varoquaux/otf)
