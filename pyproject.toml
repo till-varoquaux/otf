@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "otf"
+version = "0.1.0"
+description = "A python framework for on-the-fly distributed workflows"
+authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
+license = "CC0-1.0"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pytest-watch = {version = "^4.2.0", optional=true}
+
+[tool.poetry.dev-dependencies]
+mypy = "^0.931"
+flake8 = "^4.0.1"
+isort = "^5.10.1"
+black = "^22.1.0"
+pytest-cov = "^3.0.0"
+
+[tool.poetry.extras]
+dev-tools = ["pytest-watch"]
+
+[tool.isort]
+profile = "black"
+
+[tool.coverage.paths]
+source = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["otf"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
