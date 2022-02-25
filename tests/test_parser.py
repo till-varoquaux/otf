@@ -1,4 +1,5 @@
 import ast
+import inspect
 
 import pytest
 
@@ -96,3 +97,40 @@ def test_get_line_error2(tmp_path):
     exec(compile("def f():\n   return 5", str(tmp_path / "a"), "exec"), g)
     with pytest.raises(OSError, match="could not get source code"):
         parser._get_lines(g["f"])
+
+
+def test_strip_annot():
+    def f(x: int, /, y: float = 5.0, *, z=7, **rest) -> int:
+        return 5
+
+    def g(x, /, y=5.0, *, z=7, **rest):
+        return 5
+
+    assert parser._get_signature(f) == inspect.signature(g)
+
+
+@pytest.mark.parametrize(
+    ("asig", "exploded"),
+    (
+        ("a, b", ["a", "b"]),
+        (
+            "w, x = 4, /, y = 5., *, z=7, **rest",
+            {
+                "args": ["w", "x", "/", "y", "*", "z", "**rest"],
+                "defaults": [4, 5.0],
+                "kwdefaults": {"z": 7},
+            },
+        ),
+        ("arg1, arg2, *args, opt_args", ["arg1", "arg2", "*args", "opt_args"]),
+        ("arg1, arg2, /", ["arg1", "arg2", "/"]),
+    ),
+)
+def test_explode_sig(asig, exploded):
+    # We create a function that takes the arguments described in asig
+    program = f"def fn({asig}): pass"
+    g = {}
+    exec(program, g)
+    fn = g["fn"]
+    sig = inspect.signature(fn)
+    assert parser._explode_signature(sig) == exploded
+    assert parser._implode_signature(exploded) == sig
