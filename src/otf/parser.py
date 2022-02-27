@@ -246,7 +246,11 @@ class Function(NamedTuple):
     signature: inspect.Signature
     lines: tuple[str, ...]
     statements: tuple[ast.stmt, ...]
-    # TODO: add closure
+    # TODO: add captured variables.
+
+    # The captured variables for a python function are in <function>__globals__
+    # and <function>.__closure__. They are referenced from
+    # <function>.__code__.co_names and <function>.__code__.co_freevars
 
     @classmethod
     def from_function(cls, fn: Callable[..., Any]) -> "Function":

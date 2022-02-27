@@ -20,6 +20,7 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.10"
 pytest-watch = {version = "^4.2.0", optional=true}
+grip = {version = "*", optional=true}
 
 [tool.poetry.dev-dependencies]
 mypy = "^0.931"
@@ -29,7 +30,7 @@ black = "^22.1.0"
 pytest-cov = "^3.0.0"
 
 [tool.poetry.extras]
-dev-tools = ["pytest-watch"]
+dev-tools = ["grip", "pytest-watch"]
 
 [tool.isort]
 profile = "black"
