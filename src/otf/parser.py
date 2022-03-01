@@ -1,7 +1,8 @@
 import ast
+import dataclasses
 import inspect
 import linecache
-from typing import Any, Callable, NamedTuple, TypedDict
+from typing import Any, Callable, TypedDict
 
 #
 # This module contains code adapted from cpython's inspect.py. This code was
@@ -10,7 +11,8 @@ from typing import Any, Callable, NamedTuple, TypedDict
 __all__ = ("Function",)
 
 
-class Position(NamedTuple):
+@dataclasses.dataclass(frozen=True, slots=True)
+class Position:
     lineno: int
     col_offset: int
 
@@ -23,11 +25,16 @@ class FnFoundException(Exception):
 
 
 class _FnFinder(ast.NodeVisitor):
-    def __init__(self, qualname):
+    qualname: str
+    stack: list[str]
+
+    def __init__(self, qualname: str) -> None:
         self.stack = []
         self.qualname = qualname
 
-    def visit_FunctionDef(self, node):
+    def visit_FunctionDef(
+        self, node: ast.AsyncFunctionDef | ast.FunctionDef
+    ) -> None:
         self.stack.append(node.name)
         if self.qualname == ".".join(self.stack):
             raise FnFoundException(node)
@@ -39,19 +46,19 @@ class _FnFinder(ast.NodeVisitor):
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
-    def visit_ClassDef(self, node):
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.stack.append(node.name)
         self.generic_visit(node)
         self.stack.pop()
 
 
-def _get_lines(object) -> tuple[str, list[str]]:
-    filename = inspect.getsourcefile(object)
+def _get_lines(fn: Callable[..., Any]) -> tuple[str, list[str]]:
+    filename = inspect.getsourcefile(fn)
     if not filename:
         raise OSError("source code not available")
     linecache.checkcache(filename)
 
-    module = inspect.getmodule(object, filename)
+    module = inspect.getmodule(fn, filename)
     lines = linecache.getlines(
         filename, module.__dict__ if module is not None else None
     )
@@ -87,7 +94,10 @@ def _get_signature(fn: Callable[..., Any]) -> inspect.Signature:
 
 
 class _ExplodedSignatureDictBase(TypedDict, total=True):
-    """The mandatory argummens for ExplodedSignatureDict"""
+    """The mandatory argumments for ExplodedSignatureDict"""
+
+    # Once PEP 655 gets accepted we'll be able to merge this and
+    # ExplodedSignatureDict in one class
 
     args: list[str]
 
@@ -220,14 +230,14 @@ def _implode_signature(
         else:
             assert arg.isidentifier()
             default = inspect.Parameter.empty
-            if kind == inspect.Parameter.KEYWORD_ONLY:
-                default = kwdefaults.get(arg, inspect.Parameter.empty)
-            else:
-                assert kind in (
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                ), kind
+            if kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
                 num_pos += 1
+            else:
+                # assert kind == inspect.Parameter.KEYWORD_ONLY, kind
+                default = kwdefaults.get(arg, inspect.Parameter.empty)
             acc.append(inspect.Parameter(name=arg, kind=kind, default=default))
 
     val: Any
@@ -238,19 +248,15 @@ def _implode_signature(
     return inspect.Signature(acc)
 
 
-class Function(NamedTuple):
+@dataclasses.dataclass(frozen=True)
+class Function:
     name: str
     filename: str
     lineno: int
     col_offset: int
-    signature: inspect.Signature
     lines: tuple[str, ...]
+    signature: inspect.Signature
     statements: tuple[ast.stmt, ...]
-    # TODO: add captured variables.
-
-    # The captured variables for a python function are in <function>__globals__
-    # and <function>.__closure__. They are referenced from
-    # <function>.__code__.co_names and <function>.__code__.co_freevars
 
     @classmethod
     def from_function(cls, fn: Callable[..., Any]) -> "Function":

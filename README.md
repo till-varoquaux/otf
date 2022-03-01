@@ -76,6 +76,7 @@ wire. Although we will not have our own serialization format we will support
 *exploding* functions to a representations that plays nicely with `pickle`.
 
 - [x] Parse functions
+- [ ] Explode functions
 - [ ] Capture closures
 - [ ] Unparse functions
-- [ ] Explode/implode functions
+- [ ] Implode functions

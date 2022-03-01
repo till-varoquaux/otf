@@ -6,14 +6,14 @@ import pytest
 from otf import parser
 
 
-def _to_stmts(x: str | ast.stmt) -> list[ast.stmt]:
+def _to_stmts(x):
     if isinstance(x, str):
         return ast.parse(x).body
     else:
         return [x]
 
 
-def unparse(*elts: str | ast.stmt) -> str:
+def unparse(*elts):
     return "\n".join(ast.unparse(stmt) for x in elts for stmt in _to_stmts(x))
 
 

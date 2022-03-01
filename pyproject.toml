@@ -14,7 +14,7 @@ classifiers = [
     "License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
     "Programming Language :: Python",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
-]
+ ]
 
 
 [tool.poetry.dependencies]
@@ -32,6 +32,10 @@ pytest-cov = "^3.0.0"
 [tool.poetry.extras]
 dev-tools = ["grip", "pytest-watch"]
 
+[tool.black]
+line-length = 80
+target-version = ['py310']
+
 [tool.isort]
 profile = "black"
 
@@ -45,6 +49,17 @@ source = ["otf"]
 [tool.coverage.report]
 show_missing = true
 fail_under = 100
+
+[tool.mypy]
+python_version = "3.10"
+show_error_codes=true
+strict = true
+warn_unused_ignores=false
+exclude=["tests/*"]
+
+[tool.pytest.ini_options]
+addopts = "--cov"
+testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
