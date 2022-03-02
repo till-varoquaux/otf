@@ -72,6 +72,18 @@ def test_get_body_async():
     )
 
 
+@pytest.mark.skip("https://github.com/till-varoquaux/otf/issues/2")
+def test_body_bug():
+    def f():
+        "wrong function"
+
+    def f():  # noqa: F811
+        "correct function"
+
+    ff = parser.Function.from_function(f)
+    assert ast.literal_eval(ff.lines[0].strip()) == "correct function"
+
+
 def test_keeps_inner_indent():
     def f():
         return """a
