@@ -25,11 +25,13 @@ def test_get_body_pb(monkeypatch):
         parser.Function.from_function(Kls)
 
     # If, for some reason, we fail to parse, we get an intelligible error.
+    tgt = lambda _: 5  # noqa: E731
+    tgt.__name__ = "fake_f"
     with monkeypatch.context() as m, pytest.raises(
         ValueError, match="Could not find function definition for"
     ):
         m.setattr("inspect.isfunction", lambda _: True)
-        parser.Function.from_function(Kls)
+        parser.Function.from_function(tgt)
 
     with pytest.raises(TypeError, match="lambdas not supported"):
         parser.Function.from_function(lambda x: x * x)
@@ -57,6 +59,20 @@ def test_get_body():
     )
 
 
+def test_get_body2():
+    def empty():
+        pass
+
+    ff = parser.Function.from_function(empty)
+
+    assert (
+        unparse(*ff.statements)
+        == unparse(*(line.lstrip() for line in ff.lines))
+        == unparse(ast.Pass())
+        == "pass"
+    )
+
+
 def test_get_body_async():
     async def f(g):
         a = await g()
@@ -72,16 +88,21 @@ def test_get_body_async():
     )
 
 
-@pytest.mark.skip("https://github.com/till-varoquaux/otf/issues/2")
-def test_body_bug():
+# https://github.com/till-varoquaux/otf/issues/2
+def test_get_body_redef():
     def f():
-        "wrong function"
+        "original"
+
+    orig = f
 
     def f():  # noqa: F811
-        "correct function"
+        "redefined"
 
     ff = parser.Function.from_function(f)
-    assert ast.literal_eval(ff.lines[0].strip()) == "correct function"
+    assert ast.literal_eval(ff.lines[0].strip()) == "redefined"
+
+    ff = parser.Function.from_function(orig)
+    assert ast.literal_eval(ff.lines[0].strip()) == "original"
 
 
 def test_keeps_inner_indent():

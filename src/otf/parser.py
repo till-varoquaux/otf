@@ -25,18 +25,23 @@ class FnFoundException(Exception):
 
 
 class _FnFinder(ast.NodeVisitor):
+    lineno: int  # The function should be defined at or below that line
     qualname: str
     stack: list[str]
 
-    def __init__(self, qualname: str) -> None:
+    def __init__(self, qualname: str, lineno: int) -> None:
         self.stack = []
+        self.lineno = lineno
         self.qualname = qualname
 
     def visit_FunctionDef(
         self, node: ast.AsyncFunctionDef | ast.FunctionDef
     ) -> None:
         self.stack.append(node.name)
-        if self.qualname == ".".join(self.stack):
+        if (
+            self.qualname == ".".join(self.stack)
+            and node.body[0].lineno >= self.lineno
+        ):
             raise FnFoundException(node)
 
         self.stack.append("<locals>")
@@ -277,7 +282,7 @@ class Function:
         qualname = fn.__qualname__
         source = "".join(lines)
         tree = ast.parse(source)
-        fn_finder = _FnFinder(qualname)
+        fn_finder = _FnFinder(qualname, lineno=fn.__code__.co_firstlineno)
         try:
             fn_finder.visit(tree)
         except FnFoundException as e:
