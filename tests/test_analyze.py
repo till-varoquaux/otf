@@ -24,6 +24,7 @@ def test_visit():
         b.i = 5  # noqa: F821
         var: int
         var2: int = 5 * x  # noqa
+        print(foo)
 
     ff = parser.Function.from_function(f)
     assert analyze.visit_function(ff) == analyze.AstInfos(
@@ -35,6 +36,7 @@ def test_visit():
         free_vars={
             "b": ANY_NAME,
             "x": ANY_NAME,
+            "print": ANY_NAME,
         },
     )
 

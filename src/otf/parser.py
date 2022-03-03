@@ -177,13 +177,10 @@ def _explode_signature(sig: inspect.Signature) -> ExplodedSignature:
         "args": args,
     }
 
-    # There's a bug in coverage that prevents it from detecting that those lines
-    # are covered
-    # https://github.com/till-varoquaux/otf/issues/1
-    if kwdefaults:  # pragma: no cover
+    if kwdefaults:
         result["kwdefaults"] = kwdefaults
 
-    if defaults:  # pragma: no cover
+    if defaults:
         result["defaults"] = defaults
 
     return result

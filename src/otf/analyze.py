@@ -40,9 +40,7 @@ class AstInfos:
         for k, v in itertools.chain(
             self.free_vars.items(), other.free_vars.items()
         ):
-            # This line is covered by coverage fails to see it.
-            # https://github.com/till-varoquaux/otf/issues/1
-            if k not in bound_vars and k not in free_vars:  # pragma: no cover
+            if k not in bound_vars and k not in free_vars:
                 free_vars[k] = v
 
         return AstInfos(
@@ -72,8 +70,7 @@ class AstInfosCollector(ast.NodeVisitor):
 
     def visit(self, node: ast.AST) -> AstInfos:
         res = self._cache.get(node, None)
-        # https://github.com/till-varoquaux/otf/issues/1
-        if res is None:  # pragma: no cover
+        if res is None:
             res = self._cache[node] = super().visit(node)
         return res
 

@@ -154,6 +154,20 @@ def test_strip_annot():
                 "kwdefaults": {"z": 7},
             },
         ),
+        (
+            "x, y = 4",
+            {
+                "args": ["x", "y"],
+                "defaults": [4],
+            },
+        ),
+        (
+            "x, *, y = 4",
+            {
+                "args": ["x", "*", "y"],
+                "kwdefaults": {"y": 4},
+            },
+        ),
         ("arg1, arg2, *args, opt_args", ["arg1", "arg2", "*args", "opt_args"]),
         ("arg1, arg2, /", ["arg1", "arg2", "/"]),
     ),
