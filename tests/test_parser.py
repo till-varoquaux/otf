@@ -1,5 +1,6 @@
 import ast
 import inspect
+import textwrap
 
 import pytest
 
@@ -53,7 +54,7 @@ def test_get_body():
 
     assert (
         unparse(*ff.statements)
-        == unparse(*(line.lstrip() for line in ff.lines))
+        == unparse(textwrap.dedent(ff.body))
         == unparse(ast.Return(ast.Name("a")))
         == "return a"
     )
@@ -67,7 +68,7 @@ def test_get_body2():
 
     assert (
         unparse(*ff.statements)
-        == unparse(*(line.lstrip() for line in ff.lines))
+        == unparse(textwrap.dedent(ff.body))
         == unparse(ast.Pass())
         == "pass"
     )
@@ -82,7 +83,7 @@ def test_get_body_async():
 
     assert (
         unparse(*ff.statements)
-        == unparse(*(line.lstrip() for line in ff.lines))
+        == unparse(textwrap.dedent(ff.body))
         == unparse("a = await g()", "return await a")
         == "a = await g()\nreturn await a"
     )
@@ -99,10 +100,50 @@ def test_get_body_redef():
         "redefined"
 
     ff = parser.Function.from_function(f)
-    assert ast.literal_eval(ff.lines[0].strip()) == "redefined"
+    assert ast.literal_eval(ff.body.strip()) == "redefined"
 
     ff = parser.Function.from_function(orig)
-    assert ast.literal_eval(ff.lines[0].strip()) == "original"
+    assert ast.literal_eval(ff.body.strip()) == "original"
+
+
+def get_body(f):
+    return parser.Function.from_function(f).body
+
+
+def test_body_same_line():
+
+    # fmt: off
+
+    # Multi statements, one line
+    def f1(): x = 5; return x  # noqa: E702
+
+    # Weird break
+    def f2(
+    ): return 5
+
+    def f3(
+    ): x = (  # noqa: E702
+    ); return x  # noqa: E702
+
+    # fmt: on
+
+    assert get_body(f1).strip() == "...: x = 5; return x"
+    assert get_body(f2).strip() == "...: return 5"
+    assert get_body(f3).strip() == "...: x = (  # noqa: E702\n    ); return x"
+
+
+def test_body_comments():
+    def f():
+        # Before
+        x = 5
+        # In between
+        return x  # After
+
+    assert textwrap.dedent(get_body(f)).split("\n") == [
+        "x = 5",
+        "# In between",
+        "return x",
+    ]
 
 
 def test_keeps_inner_indent():

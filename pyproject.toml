@@ -58,8 +58,8 @@ warn_unused_ignores=false
 exclude=["tests/*"]
 
 [tool.pytest.ini_options]
-addopts = "--cov"
-testpaths = ["tests"]
+addopts = "--cov --doctest-modules"
+testpaths = ["src", "tests"]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

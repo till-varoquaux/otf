@@ -1,5 +1,6 @@
 import ast
 import inspect
+import textwrap
 
 import pytest
 
@@ -90,8 +91,6 @@ def test_env_capture():
     env["incr"] = env["incr2"]
 
     assert incr() == 4
-    assert [x.strip() for x in incr.origin.lines] == [
-        "global i",
-        "i += 2",
-        "return i",
-    ]
+    assert textwrap.dedent(incr.origin.body) == (
+        "global i\n" "i += 2\n" "return i"
+    )

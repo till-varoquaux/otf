@@ -2,13 +2,16 @@ import ast
 import dataclasses
 import inspect
 import linecache
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable, Optional, TypedDict, TypeVar
 
 #
 # This module contains code adapted from cpython's inspect.py. This code was
 # marked as public domain code.
 
 __all__ = ("Function",)
+
+
+T = TypeVar("T")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -70,16 +73,6 @@ def _get_lines(fn: Callable[..., Any]) -> tuple[str, list[str]]:
     if not lines:
         raise OSError("could not get source code")
     return filename, lines
-
-
-def get_end_pos(node: ast.stmt) -> Position:
-    assert node.end_lineno is not None and node.end_col_offset is not None
-    return Position(node.end_lineno, node.end_col_offset)
-
-
-def get_start_pos(node: ast.stmt) -> Position:
-    assert node.lineno is not None and node.col_offset is not None
-    return Position(node.lineno, node.col_offset)
 
 
 def _get_signature(fn: Callable[..., Any]) -> inspect.Signature:
@@ -251,15 +244,74 @@ def _implode_signature(
     return inspect.Signature(acc)
 
 
+def _not_none(x: Optional[T]) -> T:
+    assert x is not None
+    return x
+
+
 @dataclasses.dataclass(frozen=True)
 class Function:
+    """The string representation of the function in body is constructed to keep all
+    the preserve the positions between the node from the original source. It is
+    not necessarily valid python::
+
+    >>> def f(): return 5
+    >>> ff = Function.from_function(f)
+    >>> ff.body
+    '...: return 5'
+    """
+
     name: str
     filename: str
-    lineno: int
-    col_offset: int
-    lines: tuple[str, ...]
     signature: inspect.Signature
     statements: tuple[ast.stmt, ...]
+
+    @property
+    def lineno(self) -> int:
+        """First line of the body of the function in the original file."""
+        return _not_none(self.statements[0].lineno)
+
+    @property
+    def col_offset(self) -> int:
+        return _not_none(self.statements[0].col_offset)
+
+    @property
+    def end_lineno(self) -> int:
+        """Last line of the body of the function in the original file."""
+
+        return _not_none(self.statements[-1].end_lineno)
+
+    @property
+    def end_col_offset(self) -> int:
+        return _not_none(self.statements[-1].end_col_offset)
+
+    @property
+    def body(self) -> str:
+        """A string representation of the function.
+
+        The return value is constructed to preserve the positions between the
+        node from the original source and make it easy to map an error back to
+        its source in the original file. It is not necessarily valid python:
+
+        >>> def f(): return 5
+        >>> ff = Function.from_function(f)
+        >>> ff.body
+        '  ...: return 5'
+
+        """
+
+        lines = linecache.getlines(self.filename)
+
+        # Can we use the info from the AST in statements?
+        fn_lines = lines[self.lineno - 1 : self.end_lineno]
+        fn_lines[-1] = fn_lines[-1][: self.end_col_offset]
+
+        prelude = fn_lines[0][: self.col_offset]
+        if not prelude.isspace():
+            fn_lines[0] = (
+                "...: ".rjust(len(prelude)) + fn_lines[0][self.col_offset :]
+            )
+        return "".join(fn_lines).rstrip()
 
     @classmethod
     def from_function(cls, fn: Callable[..., Any]) -> "Function":
@@ -289,19 +341,9 @@ class Function:
                 f"Could not find function definition for: {qualname!r}"
             )
 
-        end_pos = get_end_pos(node)
-        start_pos = get_start_pos(node.body[0])
-        fn_lines = lines[start_pos.lineno - 1 : end_pos.lineno]
-        # TODO: look backward for comments?
-        # Trim the col_offsets
-        fn_lines[-1] = fn_lines[-1][: end_pos.col_offset]
-        fn_lines[0] = fn_lines[0][start_pos.col_offset :]
         return cls(
             name=fn.__name__,
             statements=tuple(node.body),
             filename=filename,
-            lineno=start_pos.lineno,
-            col_offset=start_pos.col_offset,
-            lines=tuple(fn_lines),
             signature=_get_signature(fn),
         )
