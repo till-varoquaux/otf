@@ -1,7 +1,14 @@
 import ast
+import atexit
+import contextlib
 import dataclasses
+import hashlib
 import inspect
 import linecache
+import os
+import re
+import tempfile
+import typing
 from typing import Any, Callable, Optional, TypedDict, TypeVar
 
 #
@@ -92,7 +99,7 @@ def _get_signature(fn: Callable[..., Any]) -> inspect.Signature:
 
 
 class _ExplodedSignatureDictBase(TypedDict, total=True):
-    """The mandatory argumments for ExplodedSignatureDict"""
+    """The mandatory arguments for ExplodedSignatureDict"""
 
     # Once PEP 655 gets accepted we'll be able to merge this and
     # ExplodedSignatureDict in one class
@@ -347,3 +354,113 @@ class Function:
             filename=filename,
             signature=_get_signature(fn),
         )
+
+
+class ExplodedFunction(TypedDict, total=True):
+    name: str
+    signature: ExplodedSignature
+    body: str
+
+
+class _DotDotDot:
+    """A class that prints out as ...
+
+    Sadly python's ... does not behave how we'd want it to:
+
+    >>> str(...)
+    'Ellipsis'
+
+
+    So we have to go and create our own class:
+
+    >>> str(_DotDotDot())
+    '...'
+
+    """
+
+    def __str__(self) -> str:
+        return "..."
+
+    __repr__ = __str__
+
+
+DOT_DOT_DOT = _DotDotDot()
+
+
+def _explode_function(fn: Function) -> ExplodedFunction:
+    return {
+        "name": fn.name,
+        "signature": _explode_signature(fn.signature),
+        "body": fn.body,
+    }
+
+
+def _gen_imploded_function_str(
+    exploded: ExplodedFunction, sig: inspect.Signature
+) -> str:
+    simplified_sig = inspect.Signature(
+        [
+            param.replace(default=_DotDotDot())
+            if param.default is not param.empty
+            else param
+            for param in sig.parameters.values()
+        ]
+    )
+    sig_str = str(simplified_sig)
+    assert sig_str[0] == "(" and sig_str[-1] == ")"
+    args_str = sig_str[1:-1]
+    body = exploded["body"]
+    m = re.match(r" *\.\.\.:", body)
+    header = f"def {exploded['name']}({args_str}):"
+    if m is None:
+        return f"{header}\n{body}\n"
+    matchlen = len(m.group(0))
+    return f"{header}{body[matchlen:]}\n"
+
+
+# We fill the linecache with the content of the functions to make backtrace work
+# well.
+#
+# Both doctest and ipython patch linecache to handle "fake files":
+# + https://github.com/python/cpython/blob/26fa25a9a73/Lib/doctest.py#L1427
+# + https://github.com/ipython/ipython/blob/b9c1adb1119/IPython/core
+#   /compilerop.py#L189
+#
+# We probably don't want to do the same: this would cause conflicts between our
+# code and theirs.
+
+_SOURCE_DIR: Optional[tempfile.TemporaryDirectory[str]] = None
+
+
+def _cleanup() -> None:
+    global _SOURCE_DIR
+    if _SOURCE_DIR is not None:
+        _SOURCE_DIR.cleanup()
+        _SOURCE_DIR = None
+
+
+def _fill_linecache(data: str) -> str:
+    global _SOURCE_DIR
+    if _SOURCE_DIR is None:
+        _SOURCE_DIR = tempfile.TemporaryDirectory(prefix="otf_py_srcs")
+        atexit.register(_cleanup)
+    digest = hashlib.sha1(data.encode("utf8")).hexdigest()
+    filename = f"{digest}.py"
+    path = os.path.join(_SOURCE_DIR.name, filename)
+    with contextlib.suppress(FileExistsError), open(path, mode="xt") as fp:
+        fp.write(data)
+    return path
+
+
+def _implode_function(exploded: ExplodedFunction) -> Function:
+    signature = _implode_signature(exploded["signature"])
+    fun_str = _gen_imploded_function_str(exploded, signature)
+    filename = _fill_linecache(fun_str)
+    tree = ast.parse(fun_str)
+    statements = typing.cast(ast.FunctionDef, tree.body[0]).body
+    return Function(
+        name=exploded["name"],
+        filename=filename,
+        signature=signature,
+        statements=tuple(statements),
+    )

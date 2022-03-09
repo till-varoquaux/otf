@@ -1,10 +1,16 @@
 import ast
 import inspect
+import pathlib
 import textwrap
 
 import pytest
 
 from otf import parser
+
+
+@pytest.fixture(autouse=True)
+def f():
+    parser._cleanup()
 
 
 def _to_stmts(x):
@@ -222,3 +228,57 @@ def test_explode_sig(asig, exploded):
     sig = inspect.signature(fn)
     assert parser._explode_signature(sig) == exploded
     assert parser._implode_signature(exploded) == sig
+
+
+def explode(f):
+    fn = parser.Function.from_function(f)
+    return parser._explode_function(fn)
+
+
+def test_explode_function():
+    # fmt: off
+
+    def f(a, *, b=5):
+        return a + b
+
+    # fmt: on
+
+    exploded = {
+        "body": "        return a + b",
+        "name": "f",
+        "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
+    }
+    assert explode(f) == exploded
+    reconstituted = parser._implode_function(exploded)
+    assert pathlib.Path(reconstituted.filename).read_text() == (
+        "def f(a, *, b=...):\n" "        return a + b\n"
+    )
+
+
+def test_explode_function2():
+    # fmt: off
+
+    def f(a, *, b=5): return a + b
+
+    # fmt: on
+
+    exploded = {
+        "body": "                 ...: return a + b",
+        "name": "f",
+        "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
+    }
+    assert explode(f) == exploded
+    reconstituted = parser._implode_function(exploded)
+    assert (
+        pathlib.Path(reconstituted.filename).read_text()
+        == "def f(a, *, b=...): return a + b\n"
+    )
+
+
+def test_double_fill_linecache():
+    a = parser._fill_linecache("a")
+    b = parser._fill_linecache("b")
+    assert pathlib.Path(a).read_text() == "a"
+    assert pathlib.Path(b).read_text() == "b"
+    a2 = parser._fill_linecache("a")
+    assert a == a2
