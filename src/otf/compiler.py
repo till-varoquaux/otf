@@ -1,8 +1,9 @@
 import ast
 import collections
+import contextvars
 import inspect
 import typing
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 from otf import parser
 
@@ -61,16 +62,65 @@ def _mk_function_def(fn: parser.Function) -> ast.FunctionDef:
     return fun_def
 
 
+_value_missing = object()
+
+
+def _mk_runnable(fn: parser.Function, env: dict[str, Any]) -> FunctionType:
+    fun_def = _mk_function_def(fn)
+    code = compile(
+        ast.Module(body=[fun_def], type_ignores=[]),
+        filename=fn.filename,
+        mode="exec",
+    )
+    prev = env.get(fn.name, _value_missing)
+    exec(code, env)
+    raw = env[fn.name]
+
+    kwdefaults = {}
+    defaults = []
+
+    for param in fn.signature.parameters.values():
+        if param.default is param.empty:
+            continue
+        if param.kind == inspect.Parameter.KEYWORD_ONLY:
+            kwdefaults[param.name] = param.default
+        else:
+            defaults.append(param.default)
+
+    raw.__defaults__ = tuple(defaults)
+    if kwdefaults:
+        raw.__kwdefaults__ = kwdefaults
+    if prev is _value_missing:
+        del env[fn.name]
+    else:
+        env[fn.name] = prev
+    return raw  # type: ignore[no-any-return]
+
+
+_OtfEnv: contextvars.ContextVar["Environment"] = contextvars.ContextVar(
+    "OtfEnvironement"
+)
+
+
 class _OtfFunWrapper(Generic[FunctionType]):
     """A wrapper around a compiled function"""
 
     # This allows us to do things like having a defined "__reduce__" function.
-    _fun: FunctionType
+    _fun: Optional[FunctionType]
     _origin: parser.Function
 
-    def __init__(self, fun: FunctionType, origin: parser.Function) -> None:
-        self._fun = fun
+    def __init__(self, origin: parser.Function) -> None:
+        self._fun = None
         self._origin = origin
+
+    def _compile(self, env: "Environment") -> None:
+        self._fun = _mk_runnable(self._origin, env.data)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._fun is None:
+            self._compile(_OtfEnv.get())
+            assert self._fun is not None
+        return self._fun(*args, **kwargs)
 
 
 class FunctionReference:
@@ -89,38 +139,15 @@ class FunctionReference:
         self.env = env
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.env[self.name]._fun(*args, **kwargs)
+        token = _OtfEnv.set(self.env)
+        try:
+            return self.env[self.name](*args, **kwargs)
+        finally:
+            _OtfEnv.reset(token)
 
     @property
     def origin(self) -> parser.Function:
         return typing.cast(_OtfFunWrapper[Any], self.env[self.name])._origin
-
-
-def _mk_runnable(fn: parser.Function, env: dict[str, Any]) -> None:
-    fun_def = _mk_function_def(fn)
-    code = compile(
-        ast.Module(body=[fun_def], type_ignores=[]),
-        filename=fn.filename,
-        mode="exec",
-    )
-    exec(code, env)
-    raw = env[fn.name]
-
-    kwdefaults = {}
-    defaults = []
-
-    for param in fn.signature.parameters.values():
-        if param.default is param.empty:
-            continue
-        if param.kind == inspect.Parameter.KEYWORD_ONLY:
-            kwdefaults[param.name] = param.default
-        else:
-            defaults.append(param.default)
-
-    raw.__defaults__ = tuple(defaults)
-    if kwdefaults:
-        raw.__kwdefaults__ = kwdefaults
-    env[fn.name] = _OtfFunWrapper(raw, origin=fn)
 
 
 # TODO: maybe use a module instead of a userdict?
@@ -137,10 +164,49 @@ def _mk_runnable(fn: parser.Function, env: dict[str, Any]) -> None:
 class Environment(collections.UserDict[str, Any]):
     """An otf environement contains functions and values."""
 
-    def function(self, fn: FunctionType) -> FunctionType:
-        """A decorator to add a function to this environment"""
-        parsed = parser.Function.from_function(fn)
-        _mk_runnable(parser.Function.from_function(fn), self.data)
-        return typing.cast(
-            FunctionType, FunctionReference(name=parsed.name, env=self)
-        )
+    @typing.overload
+    def function(
+        self, *, lazy: bool = False
+    ) -> Callable[[FunctionType], FunctionType]:  # pragma: no cover
+        ...
+
+    @typing.overload
+    def function(
+        self, fn: FunctionType, *, lazy: bool = False
+    ) -> FunctionType:  # pragma: no cover
+        ...
+
+    def function(
+        self, fn: Optional[FunctionType] = None, *, lazy: bool = False
+    ) -> FunctionType | Callable[[FunctionType], FunctionType]:
+        """A decorator to add a function to this environment.
+
+        The decorator can be called directly on a function::
+
+            @env.function
+            def f(x: int) -> int:
+              ...
+
+        Or with arguments::
+
+            @env.function(lazy=True)
+            def f(x: int) -> int:
+              ...
+
+        """
+
+        def bind(fn: FunctionType) -> FunctionType:
+            parsed = parser.Function.from_function(fn)
+            wrapped: _OtfFunWrapper[FunctionType] = _OtfFunWrapper(
+                origin=parsed
+            )
+            if not lazy:
+                wrapped._compile(self)
+            self.data[parsed.name] = wrapped
+            return typing.cast(
+                FunctionType, FunctionReference(name=parsed.name, env=self)
+            )
+
+        if fn is None:
+            return bind
+        return bind(fn)

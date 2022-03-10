@@ -94,3 +94,32 @@ def test_env_capture():
     assert textwrap.dedent(incr.origin.body) == (
         "global i\n" "i += 2\n" "return i"
     )
+
+    # This also rebinds in the environment
+
+    @env.function
+    def incr():
+        global i
+        i += 1.0
+        return i
+
+    assert incr() == 5.0
+
+
+def test_lazy_env():
+
+    env = compiler.Environment(i=0)
+
+    @env.function(lazy=True)
+    def incr():
+        global i
+        i += 1
+        return i
+
+    assert env["incr"]._fun is None
+
+    assert incr() == 1
+
+    assert env["incr"]._fun is not None
+
+    assert incr() == 2
