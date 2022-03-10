@@ -1,5 +1,6 @@
 import ast
 import inspect
+import pickle
 import textwrap
 
 import pytest
@@ -123,3 +124,27 @@ def test_lazy_env():
     assert env["incr"]._fun is not None
 
     assert incr() == 2
+
+
+def test_pickle():
+    def f(x, y):
+        return x + y
+
+    with pytest.raises(AttributeError, match=r"Can't pickle local object"):
+        pickle.dumps(f)
+
+    env = compiler.Environment(i=0)
+
+    @env.function
+    def incr():
+        global i
+        i += 1
+        return i
+
+    copy_incr = pickle.loads(pickle.dumps(incr))
+    assert incr() == 1
+
+    # We now have a copy of the closure incr(). I.e.: it has its own environment
+    copy_incr = pickle.loads(pickle.dumps(incr))
+    assert incr() == 2
+    assert copy_incr() == 2

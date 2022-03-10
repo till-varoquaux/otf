@@ -1,6 +1,7 @@
 import ast
 import inspect
 import pathlib
+import pickle
 import textwrap
 
 import pytest
@@ -282,3 +283,18 @@ def test_double_fill_linecache():
     assert pathlib.Path(b).read_text() == "b"
     a2 = parser._fill_linecache("a")
     assert a == a2
+
+
+def test_pickle():
+    def f(a, *, b=5):
+        return a + b
+
+    ff = parser.Function.from_function(f)
+
+    s = pickle.dumps(ff)
+
+    reloaded = pickle.loads(s)
+
+    # We check that we didn't use the python pickle mechanism
+    assert reloaded.filename != ff.filename
+    assert reloaded.body == ff.body

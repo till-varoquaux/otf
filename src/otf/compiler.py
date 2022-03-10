@@ -122,6 +122,13 @@ class _OtfFunWrapper(Generic[FunctionType]):
             assert self._fun is not None
         return self._fun(*args, **kwargs)
 
+    def __getstate__(self) -> parser.ExplodedFunction:
+        return parser._explode_function(self._origin)
+
+    def __setstate__(self, origin: parser.ExplodedFunction) -> None:
+        self._origin = parser._implode_function(origin)
+        self._fun = None
+
 
 class FunctionReference:
     """A callable otf function

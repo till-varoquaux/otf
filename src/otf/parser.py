@@ -355,6 +355,16 @@ class Function:
             signature=_get_signature(fn),
         )
 
+    # Make sure that pickle uses our explode/implode code.
+    def __getstate__(self) -> "ExplodedFunction":
+        return _explode_function(self)
+
+    def __setstate__(self, exploded: "ExplodedFunction") -> None:
+        other = _implode_function(exploded)
+        # Getting around "Frozen"... we could use a __reduce__ instead. Either
+        # way, things get a bit messy when pickle is involved.
+        object.__setattr__(self, "__dict__", other.__dict__)
+
 
 class ExplodedFunction(TypedDict, total=True):
     name: str
