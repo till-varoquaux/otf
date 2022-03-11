@@ -1,9 +1,10 @@
 import ast
 import collections
 import contextvars
+import functools
 import inspect
 import typing
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Generic, Optional, TypedDict, TypeVar
 
 from otf import parser
 
@@ -130,31 +131,49 @@ class _OtfFunWrapper(Generic[FunctionType]):
         self._fun = None
 
 
-class FunctionReference:
-    """A callable otf function
-
-    This is technically a pointer to a function in an ``Environement`` but it
-    can be called like the function it points to.
-
-    """
+class ExplodedClosure(TypedDict, total=True):
+    """A serializable representation of a Closure"""
 
     env: "Environment"
-    name: str
+    # TODO: Change to a generic TypeDict when we move to python 3.11
+    # https://bugs.python.org/issue44863
+    target: _OtfFunWrapper[Any]
 
-    def __init__(self, env: "Environment", name: str) -> None:
-        self.name = name
+
+class Closure(Generic[FunctionType]):
+    """A callable otf function"""
+
+    env: "Environment"
+    target: _OtfFunWrapper[FunctionType]
+
+    def __init__(
+        self, env: "Environment", target: _OtfFunWrapper[FunctionType]
+    ) -> None:
         self.env = env
+        self.target = target
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         token = _OtfEnv.set(self.env)
         try:
-            return self.env[self.name](*args, **kwargs)
+            return self.target(*args, **kwargs)
         finally:
             _OtfEnv.reset(token)
 
     @property
     def origin(self) -> parser.Function:
-        return typing.cast(_OtfFunWrapper[Any], self.env[self.name])._origin
+        return self.target._origin
+
+    def __getstate__(self) -> ExplodedClosure:
+        # We want to get rid of any __wrapped__ etc that might have been added
+        # by functools.update_wrapper
+        return {"env": self.env, "target": self.target}
+
+    def __str__(self) -> str:
+        origin = self.target._origin
+        return f"OtfFunction::{origin.name}{origin.signature!s}"
+
+    def __repr__(self) -> str:
+        return f"<{self!s} at {hex(id(self))}>"
 
 
 # TODO: maybe use a module instead of a userdict?
@@ -210,9 +229,9 @@ class Environment(collections.UserDict[str, Any]):
             if not lazy:
                 wrapped._compile(self)
             self.data[parsed.name] = wrapped
-            return typing.cast(
-                FunctionType, FunctionReference(name=parsed.name, env=self)
-            )
+            res = Closure(target=wrapped, env=self)
+            functools.update_wrapper(res, fn)
+            return typing.cast(FunctionType, res)
 
         if fn is None:
             return bind

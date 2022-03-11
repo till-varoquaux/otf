@@ -67,6 +67,28 @@ def test_defaults():
     assert f("x", "y", ky="ky") == ("x", "y", "z", "kx", "ky")
 
 
+def test_funcref_introspection():
+    env = compiler.Environment(i=0)
+
+    @env.function
+    def mul(a, *, b=1):
+        "multiply two numbers"
+        return a * b
+
+    deadbeef = 3735928559
+    try:
+        compiler.id = lambda _: deadbeef
+
+        assert repr(mul) == "<OtfFunction::mul(a, *, b=1) at 0xdeadbeef>"
+    finally:
+        del compiler.id
+
+    # Make sure update_wrapper did its job ok
+    assert mul.__module__ == __name__
+    assert str(inspect.signature(mul)) == "(a, *, b=1)"
+    assert mul.__doc__ == "multiply two numbers"
+
+
 def test_env_capture():
 
     env = compiler.Environment(i=0)
@@ -91,8 +113,14 @@ def test_env_capture():
     # Rebinding incr in the environment updates the pointer
     env["incr"] = env["incr2"]
 
-    assert incr() == 4
+    # incr still points at the old function
+    assert incr() == 3
     assert textwrap.dedent(incr.origin.body) == (
+        "global i\n" "i += 1\n" "return i"
+    )
+
+    # but the environment has the new definition
+    assert textwrap.dedent(env["incr"]._origin.body) == (
         "global i\n" "i += 2\n" "return i"
     )
 
@@ -104,7 +132,7 @@ def test_env_capture():
         i += 1.0
         return i
 
-    assert incr() == 5.0
+    assert incr() == 4.0
 
 
 def test_lazy_env():
