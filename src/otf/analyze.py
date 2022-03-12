@@ -22,7 +22,9 @@ class AstInfos:
     bound_vars: typing.Mapping[
         str, ast.Name | inspect.Parameter
     ] = types.MappingProxyType({})
-    free_vars: typing.Mapping[str, ast.Name] = types.MappingProxyType({})
+    free_vars: typing.Mapping[
+        str, ast.Name | ast.Global
+    ] = types.MappingProxyType({})
 
     def __iadd__(self, other: "AstInfos") -> "AstInfos":
         if self is _EMPTY_INFOS:
@@ -31,23 +33,35 @@ class AstInfos:
             return self
         bound_vars = {}
         free_vars = {}
-        for k, v in itertools.chain(
+        for k, bv in itertools.chain(
             self.bound_vars.items(), other.bound_vars.items()
         ):
+            if self._is_global(k) or other._is_global(k):
+                continue
             if k not in bound_vars:
-                bound_vars[k] = v
+                bound_vars[k] = bv
 
-        for k, v in itertools.chain(
+        for k, fv in itertools.chain(
             self.free_vars.items(), other.free_vars.items()
         ):
-            if k not in bound_vars and k not in free_vars:
-                free_vars[k] = v
+            if k in bound_vars:
+                continue
+            # it's a syntax error to declare a variable global after using
+            # it. By taking the first declaration we ensure we'll always get the
+            # global.
+            if k in free_vars:
+                continue
+            free_vars[k] = fv
 
         return AstInfos(
             is_async=self.is_async or other.is_async,
             bound_vars=types.MappingProxyType(bound_vars),
             free_vars=types.MappingProxyType(free_vars),
         )
+
+    def _is_global(self, k: str) -> bool:
+        v = self.free_vars.get(k, None)
+        return isinstance(v, ast.Global)
 
 
 _EMPTY_INFOS = AstInfos()
@@ -86,6 +100,12 @@ class AstInfosCollector(ast.NodeVisitor):
             return AstInfos(bound_vars=types.MappingProxyType({node.id: node}))
         assert ctx_ty in (ast.Load, ast.Del), node
         return AstInfos(free_vars=types.MappingProxyType({node.id: node}))
+
+    def visit_Global(self, node: ast.Global) -> AstInfos:
+        # TODO: this needs to always override bound...
+        return AstInfos(
+            free_vars=types.MappingProxyType({x: node for x in node.names}),
+        )
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> AstInfos:
         acc = self.visit(node.target)
@@ -130,6 +150,9 @@ class AstInfosCollector(ast.NodeVisitor):
     )
     visit_Match = functools.partialmethod(  # type: ignore[assignment]
         _invalid_node, "match"
+    )
+    visit_Nonlocal = functools.partialmethod(  # type: ignore[assignment]
+        _invalid_node, "nonlocal"
     )
     visit_Yield = (  # type: ignore[assignment]
         visit_YieldFrom

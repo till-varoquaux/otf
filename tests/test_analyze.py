@@ -20,10 +20,12 @@ ANY_PARAMETER = Instance(inspect.Parameter)
 
 def test_visit():
     def f(**foo):
+        global c
         foo = 5  # noqa: F841
-        b.i = 5  # noqa: F821
+        b.i = c  # noqa: F821
         var: int
         var2: int = 5 * x  # noqa
+        c += 1
         print(foo)
 
     ff = parser.Function.from_function(f)
@@ -34,6 +36,7 @@ def test_visit():
             "var2": ANY_NAME,
         },
         free_vars={
+            "c": Instance(ast.Global),
             "b": ANY_NAME,
             "x": ANY_NAME,
             "print": ANY_NAME,
@@ -41,8 +44,20 @@ def test_visit():
     )
 
     assert analyze.visit_node(
-        ff.statements[0], ff.filename
+        ff.statements[1], ff.filename
     ) == analyze.AstInfos(bound_vars={"foo": ANY_NAME})
+
+
+SYNTAX_ERROR = """\
+def f():
+    x = c
+    global c
+"""
+
+
+def test_visit2():
+    with pytest.raises(SyntaxError, match="used prior to global declaration"):
+        exec(SYNTAX_ERROR)
 
 
 def test_visit_error():
