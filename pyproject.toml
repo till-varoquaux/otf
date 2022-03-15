@@ -20,6 +20,7 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.10"
 pytest-watch = {version = "^4.2.0", optional=true}
+sphinx-autobuild = {version = "*", optional=true}
 grip = {version = "*", optional=true}
 
 [tool.poetry.dev-dependencies]
@@ -28,9 +29,11 @@ flake8 = "^4.0.1"
 isort = "^5.10.1"
 black = "^22.1.0"
 pytest-cov = "^3.0.0"
+Sphinx = "^4.4.0"
+sphinx-autodoc-typehints = "^1.17.0"
 
 [tool.poetry.extras]
-dev-tools = ["grip", "pytest-watch"]
+dev-tools = ["grip", "pytest-watch", "sphinx-autobuild"]
 
 [tool.black]
 line-length = 80
