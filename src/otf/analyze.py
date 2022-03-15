@@ -5,11 +5,10 @@ import dataclasses
 import functools
 import inspect
 import itertools
-import linecache
 import types
 import typing
 
-from otf import parser
+from otf import parser, utils
 
 __all__ = ("visit_node", "visit_function", "AstInfos")
 
@@ -47,8 +46,8 @@ class AstInfos:
             if k in bound_vars:
                 continue
             # it's a syntax error to declare a variable global after using
-            # it. By taking the first declaration we ensure we'll always get the
-            # global.
+            # it. By taking the first declaration we ensure we'll always
+            # prioritize the global.
             if k in free_vars:
                 continue
             free_vars[k] = fv
@@ -114,18 +113,10 @@ class AstInfosCollector(ast.NodeVisitor):
         return acc
 
     def _invalid_node(self, name: str, node: ast.AST) -> typing.NoReturn:
-        # https://github.com/python/cpython/blob/3.10/Objects/exceptions.c#L1474
-        line = linecache.getline(self._filename, node.lineno)
-        raise SyntaxError(
+        utils.syntax_error(
             f"{name!r} not supported in otf functions.",
-            (
-                self._filename,
-                node.lineno,
-                node.col_offset,
-                line,
-                node.end_lineno,
-                node.end_col_offset,
-            ),
+            filename=self._filename,
+            node=node,
         )
 
     visit_FunctionDef = (  # type: ignore[assignment]
