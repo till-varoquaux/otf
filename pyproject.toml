@@ -4,7 +4,7 @@ version = "0.1.0-alpha.0"
 description = "A python framework for on-the-fly distributed workflows"
 authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
 license = "CC0-1.0"
-readme = "README.md"
+readme = "README.rst"
 repository = "https://github.com/till-varoquaux/otf"
 # https://pypi.org/classifiers/
 classifiers = [
