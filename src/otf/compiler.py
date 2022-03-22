@@ -1,10 +1,19 @@
 import ast
 import collections
 import contextvars
+import dataclasses
 import functools
 import inspect
 import typing
-from typing import Any, Callable, Generic, Optional, TypedDict, TypeVar
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Generic,
+    Optional,
+    TypedDict,
+    TypeVar,
+)
 
 from otf import parser
 
@@ -176,17 +185,6 @@ class Closure(Generic[FunctionType]):
         return f"<{self!s} at {hex(id(self))}>"
 
 
-# TODO: maybe use a module instead of a userdict?
-# TODO:
-#   Environement can maybe be created as classes:
-#    class MyEnv(Environment):
-#
-#       i = 5
-#
-#       def f():
-#          ...
-#
-# https://docs.python.org/3/library/importlib.html#importlib.util.module_from_spec
 class Environment(collections.UserDict[str, Any]):
     """An otf environement contains functions and values."""
 
@@ -236,3 +234,104 @@ class Environment(collections.UserDict[str, Any]):
         if fn is None:
             return bind
         return bind(fn)
+
+
+class TemplateHole(ast.AST):
+    """Used in the templating mechanism to indicate a node that needs to be
+    replaced."""
+
+    _fields = ("name",)
+    name: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _TemplateExpander:
+    """Class used to perform the actual template expansion"""
+
+    lineno: int
+    col_offset: int
+    end_lineno: Optional[int]
+    end_col_offset: Optional[int]
+    subst: dict[str, ast.AST]
+
+    @typing.overload
+    def expand(
+        self, node: int | None | str
+    ) -> int | None | str:  # pragma: no cover
+        ...
+
+    @typing.overload
+    def expand(self, node: ast.Expr) -> ast.Expr:  # pragma: no cover
+        ...
+
+    @typing.overload
+    def expand(self, node: ast.stmt) -> ast.stmt:  # pragma: no cover
+        ...
+
+    @typing.overload
+    def expand(self, node: list[ast.AST]) -> list[ast.AST]:  # pragma: no cover
+        ...
+
+    def expand(self, node: Any) -> Any:
+        if isinstance(node, (int, type(None), str)):
+            return node
+        if isinstance(node, list):
+            return [self.expand(x) for x in node]
+        if isinstance(node, TemplateHole):
+            return self.subst[node.name]
+        assert isinstance(node, ast.AST)
+        res = type(node)()
+        for field_name, field_value in ast.iter_fields(node):
+            setattr(res, field_name, self.expand(field_value))
+        if "lineno" in res._attributes:
+            res.lineno = self.lineno
+        if "end_lineno" in res._attributes:
+            res.end_lineno = self.end_lineno
+        if "col_offset" in res._attributes:
+            res.col_offset = self.col_offset
+        if "end_col_offset" in res._attributes:
+            res.end_col_offset = self.end_col_offset
+        return res
+
+
+class TemplateNamedHolePuncher(ast.NodeTransformer):
+    "replaces all the variable named __var_ with template holes."
+
+    PREFIX: ClassVar[str] = "__var_"
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        if node.id.startswith(self.PREFIX):
+            return TemplateHole(node.id[len(self.PREFIX) :])
+        return node
+
+
+@dataclasses.dataclass()
+class Template:
+    """AST templates.
+
+    The template are parsed lazily and then processed via ``hole_puncher``.
+    """
+
+    txt: str
+    hole_puncher: ast.NodeTransformer = TemplateNamedHolePuncher()
+
+    @functools.cached_property
+    def statements(self) -> list[ast.stmt]:
+        return [self.hole_puncher.visit(x) for x in ast.parse(self.txt).body]
+
+    def __call__(self, loc: ast.AST, **kwds: ast.stmt) -> list[ast.stmt]:
+        """ "Replaces all the TemplateHole with values from ``kwds``."""
+        exp = _TemplateExpander(
+            lineno=loc.lineno,
+            col_offset=loc.col_offset,
+            end_lineno=loc.end_lineno,
+            end_col_offset=loc.end_col_offset,
+            subst={},
+        )
+        for k, v in kwds.items():
+            if not hasattr(v, "lineno"):
+                # Add the missing lineno
+                exp.subst[k] = exp.expand(v)
+            else:
+                exp.subst[k] = v
+        return [exp.expand(s) for s in self.statements]

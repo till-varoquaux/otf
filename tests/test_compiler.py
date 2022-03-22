@@ -156,3 +156,26 @@ def test_pickle():
     copy_incr = pickle.loads(pickle.dumps(incr))
     assert incr() == 2
     assert copy_incr() == 2
+
+
+_NODE = ast.Pass(lineno=0, col_offset=1, end_lineno=0, end_col_offset=1)
+
+
+def test_template():
+    Tmpl = compiler.Template(
+        "if __var_srep in _otf_variables: "
+        " __var_dest = _otf_variables[__var_srep]"
+    )
+
+    Expected = "if 'a' in _otf_variables: a = _otf_variables['a']"
+
+    srep = ast.Constant(kind=None, value="a")
+    dest = ast.Name(id="a", ctx=ast.Store())
+    utils.assert_eq_ast(Tmpl(_NODE, srep=srep, dest=dest), Expected)
+
+
+def test_pos_fill():
+    Tmpl = compiler.Template("return __var_x")
+    [stmt] = Tmpl(_NODE, x=ast.Constant(value=5, lineno=5, col_offset=3))
+    assert stmt.lineno == 0
+    assert stmt.value.lineno == 5
