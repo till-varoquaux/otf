@@ -7,6 +7,7 @@ import inspect
 import itertools
 import types
 import typing
+from typing import Mapping, Optional
 
 from otf import parser, utils
 
@@ -17,13 +18,11 @@ __all__ = ("visit_node", "visit_function", "AstInfos")
 class AstInfos:
     """Informations collected from an AST"""
 
-    is_async: bool = False
-    bound_vars: typing.Mapping[
+    async_ctrl: Optional[ast.Await] = None
+    bound_vars: Mapping[
         str, ast.Name | inspect.Parameter
     ] = types.MappingProxyType({})
-    free_vars: typing.Mapping[
-        str, ast.Name | ast.Global
-    ] = types.MappingProxyType({})
+    free_vars: Mapping[str, ast.Name | ast.Global] = types.MappingProxyType({})
 
     def __iadd__(self, other: "AstInfos") -> "AstInfos":
         if self is _EMPTY_INFOS:
@@ -53,7 +52,7 @@ class AstInfos:
             free_vars[k] = fv
 
         return AstInfos(
-            is_async=self.is_async or other.is_async,
+            async_ctrl=self.async_ctrl or other.async_ctrl,
             bound_vars=types.MappingProxyType(bound_vars),
             free_vars=types.MappingProxyType(free_vars),
         )
@@ -99,6 +98,9 @@ class AstInfosCollector(ast.NodeVisitor):
             return AstInfos(bound_vars=types.MappingProxyType({node.id: node}))
         assert ctx_ty in (ast.Load, ast.Del), node
         return AstInfos(free_vars=types.MappingProxyType({node.id: node}))
+
+    def visit_Await(self, node: ast.Await) -> AstInfos:
+        return AstInfos(async_ctrl=node)
 
     def visit_Global(self, node: ast.Global) -> AstInfos:
         # TODO: this needs to always override bound...

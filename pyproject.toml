@@ -41,6 +41,7 @@ target-version = ['py310']
 
 [tool.isort]
 profile = "black"
+line_length = 80
 
 [tool.coverage.paths]
 source = ["src"]

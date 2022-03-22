@@ -19,17 +19,19 @@ ANY_PARAMETER = Instance(inspect.Parameter)
 
 
 def test_visit():
-    def f(**foo):
+    async def f(**foo):
         global c
         foo = 5  # noqa: F841
         b.i = c  # noqa: F821
         var: int
         var2: int = 5 * x  # noqa
+        await c
         c += 1
         print(foo)
 
     ff = parser.Function.from_function(f)
     assert analyze.visit_function(ff) == analyze.AstInfos(
+        async_ctrl=Instance(ast.Await),
         bound_vars={
             "foo": ANY_PARAMETER,
             "var": ANY_NAME,
