@@ -7,27 +7,7 @@ import pytest
 
 from otf import compiler, parser
 
-POS_FIELDS = ("lineno", "col_offset", "end_lineno", "end_col_offset")
-
-
-def explode_ast(node, strip_pos: bool = False):
-    """Turns ast nodes in a format that can easily be compared and introspected.
-
-    This is useful because the mapping between python's syntax and python's AST
-    is not always straightforward.
-
-    """
-    ignore_fields = POS_FIELDS if strip_pos else ()
-    if isinstance(node, (str, int, type(None))):
-        return node
-    if isinstance(node, list):
-        return [explode_ast(v, strip_pos) for v in node]
-    assert isinstance(node, ast.AST), node
-    return {
-        k: explode_ast(v, strip_pos=strip_pos)
-        for k, v in ast.iter_fields(node)
-        if k not in ignore_fields
-    } | {"__type__": type(node).__name__}
+from . import utils
 
 
 @pytest.mark.parametrize(
@@ -43,8 +23,8 @@ def test_mk_arguments(sig_str):
     got = compiler._mk_arguments(sig)
     expected = ast.parse(program).body[0].args
 
-    assert ast.unparse(expected) == ast.unparse(got) == str(sig)[1:-1]
-    assert explode_ast(expected) == explode_ast(got)
+    utils.assert_eq_ast(expected, got)
+    assert ast.unparse(got) == str(sig)[1:-1]
 
 
 def test_mk_function_def():

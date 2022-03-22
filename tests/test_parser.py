@@ -8,21 +8,12 @@ import pytest
 
 from otf import parser
 
+from . import utils
+
 
 @pytest.fixture(autouse=True)
 def f():
     parser._cleanup()
-
-
-def _to_stmts(x):
-    if isinstance(x, str):
-        return ast.parse(x).body
-    else:
-        return [x]
-
-
-def unparse(*elts):
-    return "\n".join(ast.unparse(stmt) for x in elts for stmt in _to_stmts(x))
 
 
 def test_get_body_pb(monkeypatch):
@@ -59,11 +50,11 @@ def test_get_body():
 
     ff = parser.Function.from_function(f)
 
-    assert (
-        unparse(*ff.statements)
-        == unparse(textwrap.dedent(ff.body))
-        == unparse(ast.Return(ast.Name("a")))
-        == "return a"
+    utils.assert_eq_ast(
+        ff.statements,
+        textwrap.dedent(ff.body),
+        ast.Return(ast.Name("a", ctx=ast.Load())),
+        "return a",
     )
 
 
@@ -73,11 +64,8 @@ def test_get_body2():
 
     ff = parser.Function.from_function(empty)
 
-    assert (
-        unparse(*ff.statements)
-        == unparse(textwrap.dedent(ff.body))
-        == unparse(ast.Pass())
-        == "pass"
+    utils.assert_eq_ast(
+        ff.statements, textwrap.dedent(ff.body), ast.Pass(), "pass"
     )
 
 
@@ -88,11 +76,8 @@ def test_get_body_async():
 
     ff = parser.Function.from_function(f)
 
-    assert (
-        unparse(*ff.statements)
-        == unparse(textwrap.dedent(ff.body))
-        == unparse("a = await g()", "return await a")
-        == "a = await g()\nreturn await a"
+    utils.assert_eq_ast(
+        ff.statements, textwrap.dedent(ff.body), "a = await g()\nreturn await a"
     )
 
 
@@ -162,7 +147,7 @@ def test_keeps_inner_indent():
 
     # A naive parser would dedent the whole body of the function and mess up
     # the indent.
-    assert unparse(*ff.statements) == r"return 'a\n        b'"
+    utils.assert_eq_ast(ff.statements, r"return 'a\n        b'")
 
 
 def test_get_lines_error1():
