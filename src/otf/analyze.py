@@ -1,6 +1,7 @@
 """Analyze python Asts
 """
 import ast
+import builtins
 import dataclasses
 import functools
 import inspect
@@ -75,10 +76,12 @@ class AstInfosCollector(ast.NodeVisitor):
 
     _filename: str
     _cache: dict[ast.AST, AstInfos]
+    _builtins: frozenset[str]
 
     def __init__(self, filename: str) -> None:
         self._filename = filename
         self._cache = {}
+        self._builtins = frozenset(builtins.__dict__)
 
     def visit(self, node: ast.AST) -> AstInfos:
         res = self._cache.get(node, None)
@@ -94,6 +97,21 @@ class AstInfosCollector(ast.NodeVisitor):
 
     def visit_Name(self, node: ast.Name) -> AstInfos:
         ctx_ty = type(node.ctx)
+        if node.id in self._builtins:
+            if ctx_ty == ast.Load:
+                return AstInfos()
+            utils.syntax_error(
+                "Modifying builtins is not supported in otf functions.",
+                filename=self._filename,
+                node=node,
+            )
+        if node.id.startswith("_otf_"):
+            utils.syntax_error(
+                'variables with names starting with "_otf_" are reserved for '
+                "the otf runtime.",
+                filename=self._filename,
+                node=node,
+            )
         if ctx_ty == ast.Store:
             return AstInfos(bound_vars=types.MappingProxyType({node.id: node}))
         assert ctx_ty in (ast.Load, ast.Del), node

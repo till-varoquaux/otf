@@ -1,5 +1,4 @@
 import ast
-import json
 
 
 def _to_stmts(x):
@@ -34,11 +33,62 @@ def explode_ast(node):
     }
 
 
+def _check_ast_eq(left, right, path):
+    assert type(left) == type(right), f"At {path}"
+    if isinstance(left, (str, int, type(None))):
+        assert left == right, f"At {path}"
+    elif isinstance(left, list):
+        assert len(left) == len(right), f"At {path}"
+        for idx, (le, re) in enumerate(zip(left, right)):
+            _check_ast_eq(le, re, [*path, idx])
+    elif isinstance(left, ast.AST):
+        for fld in left._fields:
+            _check_ast_eq(
+                getattr(left, fld, "<MISSING>"),
+                getattr(right, fld, "<MISSING>"),
+                [*path, fld],
+            )
+    else:
+        raise TypeError(f"At: {path}, {type(left)}")
+
+
+MISSING = ()
+
+
+def _check_fields_attributes(e, path):
+    if isinstance(e, (str, int, type(None))):
+        return
+    elif isinstance(e, list):
+        for idx, x in enumerate(e):
+            _check_fields_attributes(x, [*path, idx])
+    elif isinstance(e, ast.AST):
+        names = {*e._fields, *e._attributes}
+        assert {x for x in e.__dict__} - names == set(), f"At {path}: {e}"
+        for fld in names:
+            fld_v = getattr(e, fld, MISSING)
+            assert fld_v is not MISSING, f"At {path}: {e} missing {fld}"
+            _check_fields_attributes(fld_v, [*path, fld])
+    else:
+        raise TypeError(f"At: {path}, {type(e)}")
+
+
 def assert_eq_ast(fst, *rest):
     reference = _to_stmts(fst)
+    _check_fields_attributes(reference, [])
     unparsed = unparse(reference)
-    jsoned = json.dumps(explode_ast(reference), indent=2)
     for v in rest:
         stmts = _to_stmts(v)
+        _check_fields_attributes(stmts, [])
         assert unparsed == unparse(stmts)
-        assert jsoned == json.dumps(explode_ast(stmts), indent=2)
+        _check_ast_eq(reference, stmts, [])
+
+
+def dump(x, *path):
+    nodes = _to_stmts(x)
+    if path is not None:
+        for elt in path:
+            if isinstance(elt, int):
+                nodes = nodes[elt]
+            else:
+                nodes = getattr(nodes, elt)
+    assert False, explode_ast(nodes)

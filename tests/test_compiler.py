@@ -1,4 +1,5 @@
 import ast
+import dataclasses
 import inspect
 import pickle
 import textwrap
@@ -33,7 +34,7 @@ def test_mk_function_def():
 
     fn = parser.Function.from_function(f)
     node = compiler._mk_function_def(fn)
-    assert ast.unparse(node) == "def f():\n    return x + y"
+    utils.assert_eq_ast(node, "def f():\n    return x + y")
 
 
 def test_defaults():
@@ -179,3 +180,95 @@ def test_pos_fill():
     [stmt] = Tmpl(_NODE, x=ast.Constant(value=5, lineno=5, col_offset=3))
     assert stmt.lineno == 0
     assert stmt.value.lineno == 5
+
+
+COMPILED = r"""
+def wf(_otf_variables, _otf_pos, _otf_val):
+    if 'a' in _otf_variables:
+        a = _otf_variables['a']
+    if 'a_' in _otf_variables:
+        a_ = _otf_variables['a_']
+    if 'b' in _otf_variables:
+        b = _otf_variables['b']
+    if 'b_' in _otf_variables:
+        b_ = _otf_variables['b_']
+    if 'x' in _otf_variables:
+        x = _otf_variables['x']
+    if 'y' in _otf_variables:
+        y = _otf_variables['y']
+    match _otf_pos:
+        case 0:
+            (a_, b_) = (f1(x), f2(y))
+            return _otf_suspend(position=1, variables=locals(), awaiting=b_)
+        case 1:
+            b = _otf_val
+            return _otf_suspend(position=2, variables=locals(), awaiting=a_)
+        case 2:
+            a = _otf_val
+            return _otf_suspend(
+              position=3,
+              variables=locals(),
+              awaiting=sleep(5)
+            )
+        case 3:
+            return a + b
+"""
+
+
+def test_compile_workflow():
+    async def wf(x, y):
+        a_, b_ = f1(x), f2(y)  # noqa: F821
+        b = await b_
+        a: int = await a_
+        await sleep(5)  # noqa: F821
+        return a + b
+
+    e = compiler.Environment(
+        f1=lambda x: x,
+        f2=lambda y: y,
+    )
+
+    comp = compiler.compile_worflow(
+        parser.Function.from_function(wf), environment=e
+    )
+    utils.assert_eq_ast([compiler._mk_function_def(comp)], COMPILED)
+
+
+def test_workflow_bad_await():
+    async def wf(y):
+        if await y:
+            return 5
+
+    e = compiler.Environment()
+
+    with pytest.raises(SyntaxError):
+        e.workflow(wf)
+
+
+@dataclasses.dataclass
+class mul_fut:
+    x: int
+    y: int
+
+    @property
+    def value(self) -> int:
+        return self.x * self.y
+
+
+def test_workflow():
+
+    e = compiler.Environment(
+        mul_fut=mul_fut,
+    )
+
+    async def wf(x, y):
+        a_, b_ = mul_fut(x, 2), mul_fut(y, 3)  # noqa: F821
+        b = await b_
+        a = await a_
+        return a + b
+
+    wf = e.workflow(wf)
+    v = wf(x=5, y=6)
+    v = v.resume(v.awaiting.value)
+    res = v.resume(v.awaiting.value)
+    assert res == 28

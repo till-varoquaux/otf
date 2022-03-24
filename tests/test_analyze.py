@@ -41,13 +41,30 @@ def test_visit():
             "c": Instance(ast.Global),
             "b": ANY_NAME,
             "x": ANY_NAME,
-            "print": ANY_NAME,
         },
     )
 
     assert analyze.visit_node(
         ff.statements[1], ff.filename
     ) == analyze.AstInfos(bound_vars={"foo": ANY_NAME})
+
+
+def test_internal_variable():
+    def f():
+        return _otf_var  # noqa: F821
+
+    ff = parser.Function.from_function(f)
+    with pytest.raises(SyntaxError):
+        analyze.visit_function(ff)
+
+
+def test_assign_builtins():
+    def f():
+        print = 1  # noqa: F841
+
+    ff = parser.Function.from_function(f)
+    with pytest.raises(SyntaxError):
+        analyze.visit_function(ff)
 
 
 SYNTAX_ERROR = """\

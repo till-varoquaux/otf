@@ -53,7 +53,7 @@ def test_get_body():
     utils.assert_eq_ast(
         ff.statements,
         textwrap.dedent(ff.body),
-        ast.Return(ast.Name("a", ctx=ast.Load())),
+        ast.fix_missing_locations(ast.Return(ast.Name("a", ctx=ast.Load()))),
         "return a",
     )
 
@@ -65,7 +65,10 @@ def test_get_body2():
     ff = parser.Function.from_function(empty)
 
     utils.assert_eq_ast(
-        ff.statements, textwrap.dedent(ff.body), ast.Pass(), "pass"
+        ff.statements,
+        textwrap.dedent(ff.body),
+        ast.fix_missing_locations(ast.Pass()),
+        "pass",
     )
 
 
