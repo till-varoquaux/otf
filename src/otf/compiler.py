@@ -501,6 +501,16 @@ class Workflow:
         )
 
 
+class ExplodedSuspension(TypedDict, total=True):
+    """A serializable representation of a Suspension"""
+
+    environment: "Environment"
+    variables: dict[str, Any]
+    awaiting: Any
+    code: str
+    position: int
+
+
 @dataclasses.dataclass
 class Suspension:
     position: int
@@ -512,6 +522,36 @@ class Suspension:
         return self.workflow._resume(
             position=self.position, variables=self.variables, value=value
         )
+
+    def __getstate__(self) -> ExplodedSuspension:
+        return _explode_suspension(self)
+
+    def __setstate__(self, state: ExplodedSuspension) -> None:
+        other = _implode_suspension(state)
+        self.__dict__ = other.__dict__
+
+
+def _explode_suspension(suspension: Suspension) -> ExplodedSuspension:
+    return {
+        "environment": suspension.workflow.environment,
+        "variables": suspension.variables,
+        "awaiting": suspension.awaiting,
+        "code": suspension.workflow.origin.body,
+        "position": suspension.position,
+    }
+
+
+def _implode_suspension(exploded: ExplodedSuspension) -> Suspension:
+    function = parser._gen_function(
+        name="workflow", body=exploded["code"], signature=inspect.Signature()
+    )
+    workflow = Workflow(environment=exploded["environment"], origin=function)
+    return Suspension(
+        position=exploded["position"],
+        variables=exploded["variables"],
+        awaiting=exploded["awaiting"],
+        workflow=workflow,
+    )
 
 
 def _otf_suspend(

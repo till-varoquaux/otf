@@ -268,7 +268,9 @@ def test_workflow():
         return a + b
 
     wf = e.workflow(wf)
-    v = wf(x=5, y=6)
-    v = v.resume(v.awaiting.value)
-    res = v.resume(v.awaiting.value)
-    assert res == 28
+    # We write a very naive scheduler that keeps all the suspensions in a list
+    trace = [wf(x=5, y=6)]
+    while isinstance(trace[-1], compiler.Suspension):
+        copied = pickle.loads(pickle.dumps(trace[-1]))
+        trace.append(copied.resume(copied.awaiting.value))
+    assert trace[-1] == 28

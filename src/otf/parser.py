@@ -256,6 +256,12 @@ def _not_none(x: Optional[T]) -> T:
     return x
 
 
+class ExplodedFunction(TypedDict, total=True):
+    name: str
+    signature: ExplodedSignature
+    body: str
+
+
 @dataclasses.dataclass(frozen=True)
 class Function:
     """The string representation of the function in body is constructed to keep all
@@ -356,7 +362,7 @@ class Function:
         )
 
     # Make sure that pickle uses our explode/implode code.
-    def __getstate__(self) -> "ExplodedFunction":
+    def __getstate__(self) -> ExplodedFunction:
         return _explode_function(self)
 
     def __setstate__(self, exploded: "ExplodedFunction") -> None:
@@ -364,12 +370,6 @@ class Function:
         # Getting around "Frozen"... we could use a __reduce__ instead. Either
         # way, things get a bit messy when pickle is involved.
         object.__setattr__(self, "__dict__", other.__dict__)
-
-
-class ExplodedFunction(TypedDict, total=True):
-    name: str
-    signature: ExplodedSignature
-    body: str
 
 
 class _DotDotDot:
@@ -406,22 +406,21 @@ def _explode_function(fn: Function) -> ExplodedFunction:
 
 
 def _gen_imploded_function_str(
-    exploded: ExplodedFunction, sig: inspect.Signature
+    body: str, name: str, signature: inspect.Signature
 ) -> str:
     simplified_sig = inspect.Signature(
         [
             param.replace(default=_DotDotDot())
             if param.default is not param.empty
             else param
-            for param in sig.parameters.values()
+            for param in signature.parameters.values()
         ]
     )
     sig_str = str(simplified_sig)
     assert sig_str[0] == "(" and sig_str[-1] == ")"
     args_str = sig_str[1:-1]
-    body = exploded["body"]
     m = re.match(r" *\.\.\.:", body)
-    header = f"def {exploded['name']}({args_str}):"
+    header = f"def {name}({args_str}):"
     if m is None:
         return f"{header}\n{body}\n"
     matchlen = len(m.group(0))
@@ -462,15 +461,25 @@ def _fill_linecache(data: str) -> str:
     return path
 
 
-def _implode_function(exploded: ExplodedFunction) -> Function:
-    signature = _implode_signature(exploded["signature"])
-    fun_str = _gen_imploded_function_str(exploded, signature)
+def _gen_function(
+    name: str, body: str, signature: inspect.Signature
+) -> Function:
+    fun_str = _gen_imploded_function_str(
+        name=name, body=body, signature=signature
+    )
     filename = _fill_linecache(fun_str)
     tree = ast.parse(fun_str)
     statements = typing.cast(ast.FunctionDef, tree.body[0]).body
     return Function(
-        name=exploded["name"],
+        name=name,
         filename=filename,
         signature=signature,
         statements=tuple(statements),
+    )
+
+
+def _implode_function(exploded: ExplodedFunction) -> Function:
+    signature = _implode_signature(exploded["signature"])
+    return _gen_function(
+        name=exploded["name"], body=exploded["body"], signature=signature
     )
