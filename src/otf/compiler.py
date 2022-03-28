@@ -13,11 +13,15 @@ from typing import (
     Generic,
     Mapping,
     Optional,
+    ParamSpec,
     TypedDict,
     TypeVar,
 )
 
 from otf import analyze, parser, utils
+
+T = TypeVar("T")
+P = ParamSpec("P")
 
 FunctionType = TypeVar("FunctionType", bound=Callable[..., Any])
 
@@ -25,9 +29,9 @@ _OtfEnv: contextvars.ContextVar["Environment"] = contextvars.ContextVar(
     "OtfEnvironment"
 )
 
-_OtfWorkflow: contextvars.ContextVar["Workflow"] = contextvars.ContextVar(
-    "OtfWorkflow"
-)
+_OtfWorkflow: contextvars.ContextVar[
+    "Workflow[Any, Any]"
+] = contextvars.ContextVar("OtfWorkflow")
 
 
 def _mk_arguments(sig: inspect.Signature) -> ast.arguments:
@@ -73,7 +77,7 @@ def _mk_arguments(sig: inspect.Signature) -> ast.arguments:
     )
 
 
-def _mk_function_def(fn: parser.Function) -> ast.FunctionDef:
+def _mk_function_def(fn: parser.Function[Any, Any]) -> ast.FunctionDef:
     return ast.FunctionDef(
         fn.name,
         args=_mk_arguments(fn.signature),
@@ -91,7 +95,9 @@ def _mk_function_def(fn: parser.Function) -> ast.FunctionDef:
 _value_missing = object()
 
 
-def _mk_runnable(fn: parser.Function, env: dict[str, Any]) -> FunctionType:
+def _mk_runnable(
+    fn: parser.Function[P, T], env: dict[str, Any]
+) -> Callable[P, T]:
     fun_def = _mk_function_def(fn)
     code = compile(
         ast.Module(body=[fun_def], type_ignores=[]),
@@ -123,21 +129,24 @@ def _mk_runnable(fn: parser.Function, env: dict[str, Any]) -> FunctionType:
     return raw  # type: ignore[no-any-return]
 
 
-class _OtfFunWrapper(Generic[FunctionType]):
+class _OtfFunWrapper(Generic[P, T]):
     """A wrapper around a compiled function"""
 
     # This allows us to do things like having a defined "__reduce__" function.
-    _fun: Optional[FunctionType]
-    _origin: parser.Function
+    _fun: Optional[Callable[P, T]]
+    _origin: parser.Function[P, T]
 
-    def __init__(self, origin: parser.Function) -> None:
+    def __init__(self, origin: parser.Function[P, T]) -> None:
         self._fun = None
         self._origin = origin
 
     def _compile(self, env: "Environment") -> None:
-        self._fun = _mk_runnable(self._origin, env.data)
+        # TODO: Figure out what makes mypy unhappy here
+        self._fun = _mk_runnable(
+            self._origin, env.data  # type: ignore[arg-type]
+        )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
         if self._fun is None:
             self._compile(_OtfEnv.get())
             assert self._fun is not None
@@ -157,22 +166,22 @@ class ExplodedClosure(TypedDict, total=True):
     environment: "Environment"
     # TODO: Change to a generic TypeDict when we move to python 3.11
     # https://bugs.python.org/issue44863
-    target: _OtfFunWrapper[Any]
+    target: _OtfFunWrapper[Any, Any]
 
 
-class Closure(Generic[FunctionType]):
+class Closure(Generic[P, T]):
     """A callable otf function"""
 
     environment: "Environment"
-    target: _OtfFunWrapper[FunctionType]
+    target: _OtfFunWrapper[P, T]
 
     def __init__(
-        self, environment: "Environment", target: _OtfFunWrapper[FunctionType]
+        self, environment: "Environment", target: _OtfFunWrapper[P, T]
     ) -> None:
         self.environment = environment
         self.target = target
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
         token = _OtfEnv.set(self.environment)
         try:
             return self.target(*args, **kwargs)
@@ -180,7 +189,7 @@ class Closure(Generic[FunctionType]):
             _OtfEnv.reset(token)
 
     @property
-    def origin(self) -> parser.Function:
+    def origin(self) -> parser.Function[P, T]:
         return self.target._origin
 
     def __getstate__(self) -> ExplodedClosure:
@@ -352,7 +361,7 @@ InitTemplate = Template(
 @dataclasses.dataclass()
 class WorkflowCompiler:
 
-    src: parser.Function
+    src: parser.Function[Any, Any]
     environment: Mapping[str, Any]
     steps: list[WorkflowStep] = dataclasses.field(
         default_factory=lambda: [WorkflowStep(0)]
@@ -402,7 +411,7 @@ class WorkflowCompiler:
         if target is not None:
             dest.append(AssignTemplate(target, dest=target))
 
-    def link(self) -> parser.Function:
+    def link(self) -> parser.Function[Any, Any]:
         infos = analyze.visit_function(self.src)
         vars = sorted(
             (
@@ -455,21 +464,21 @@ class WorkflowCompiler:
 
 
 def compile_worflow(
-    fn: parser.Function, environment: Mapping[str, Any]
-) -> parser.Function:
+    fn: parser.Function[Any, T], environment: Mapping[str, Any]
+) -> parser.Function[Any, T | "Suspension"]:
     wfc = WorkflowCompiler(fn, environment=environment)
     for stmt in fn.statements:
         wfc.handle(stmt)
     return wfc.link()
 
 
-class Workflow:
+class Workflow(Generic[P, T]):
     environment: "Environment"
-    _compiled: Callable[[dict[str, Any], int, Any], Any]
-    origin: parser.Function
+    _compiled: Callable[[dict[str, Any], int, Any], T | "Suspension"]
+    origin: parser.Function[P, T]
 
     def __init__(
-        self, environment: "Environment", origin: parser.Function
+        self, environment: "Environment", origin: parser.Function[P, T]
     ) -> None:
         self.environment = environment
         self.origin = origin
@@ -480,7 +489,7 @@ class Workflow:
 
     def _resume(
         self, variables: dict[str, Any], position: int, value: Any
-    ) -> Any:
+    ) -> T | "Suspension":
         env_token = _OtfEnv.set(self.environment)
         workflow_token = _OtfWorkflow.set(self)
         try:
@@ -491,7 +500,7 @@ class Workflow:
             _OtfEnv.reset(env_token)
             _OtfWorkflow.reset(workflow_token)
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T | "Suspension":
         ba = self.origin.signature.bind(*args, **kwargs)
         ba.apply_defaults()
         return self._resume(
@@ -516,7 +525,7 @@ class Suspension:
     position: int
     variables: dict[str, Any]
     awaiting: Any
-    workflow: "Workflow"
+    workflow: "Workflow[Any, Any]"
 
     def resume(self, value: Any) -> Any:
         return self.workflow._resume(
@@ -545,7 +554,9 @@ def _implode_suspension(exploded: ExplodedSuspension) -> Suspension:
     function = parser._gen_function(
         name="workflow", body=exploded["code"], signature=inspect.Signature()
     )
-    workflow = Workflow(environment=exploded["environment"], origin=function)
+    workflow = Workflow[Any, Any](
+        environment=exploded["environment"], origin=function
+    )
     return Suspension(
         position=exploded["position"],
         variables=exploded["variables"],
@@ -587,19 +598,19 @@ class Environment(collections.UserDict[str, Any]):
 
     @typing.overload
     def function(
-        self, *, lazy: bool = False
-    ) -> Callable[[FunctionType], FunctionType]:  # pragma: no cover
+        self, /, *, lazy: bool = False
+    ) -> Callable[[Callable[P, T]], Closure[P, T]]:  # pragma: no cover
         ...
 
     @typing.overload
     def function(
-        self, fn: FunctionType, *, lazy: bool = False
-    ) -> FunctionType:  # pragma: no cover
+        self, fn: Callable[P, T], /, *, lazy: bool = False
+    ) -> Closure[Any, T]:  # pragma: no cover
         ...
 
     def function(
-        self, fn: Optional[FunctionType] = None, *, lazy: bool = False
-    ) -> FunctionType | Callable[[FunctionType], FunctionType]:
+        self, fn: Optional[Callable[P, T]] = None, /, *, lazy: bool = False
+    ) -> Closure[P, T] | Callable[[Callable[P, T]], Closure[P, T]]:
         """A decorator to add a function to this environment.
 
         The decorator can be called directly on a function::
@@ -616,22 +627,20 @@ class Environment(collections.UserDict[str, Any]):
 
         """
 
-        def bind(fn: FunctionType) -> FunctionType:
-            parsed = parser.Function.from_function(fn)
-            wrapped: _OtfFunWrapper[FunctionType] = _OtfFunWrapper(
-                origin=parsed
-            )
+        def bind(fn: Callable[P, T]) -> Closure[P, T]:
+            parsed = parser.Function[P, T].from_function(fn)
+            wrapped = _OtfFunWrapper[P, T](origin=parsed)
             if not lazy:
                 wrapped._compile(self)
             self.data[parsed.name] = wrapped
-            res = Closure(target=wrapped, environment=self)
+            res = Closure[P, T](target=wrapped, environment=self)
             functools.update_wrapper(res, fn)
-            return typing.cast(FunctionType, res)
+            return res
 
         if fn is None:
             return bind
         return bind(fn)
 
-    def workflow(self, fn: FunctionType) -> Workflow:
-        parsed = parser.Function.from_function(fn)
-        return Workflow(environment=self, origin=parsed)
+    def workflow(self, fn: Callable[P, T]) -> Workflow[P, T]:
+        parsed = parser.Function[P, T].from_function(fn)
+        return Workflow[P, T](environment=self, origin=parsed)

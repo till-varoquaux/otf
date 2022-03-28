@@ -1,11 +1,14 @@
 import builtins
 import inspect
 import typing
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Optional, ParamSpec, TypeVar
 
 from otf import analyze, compiler, utils
 
 __all__ = ("function", "environment")
+
+T = TypeVar("T")
+P = ParamSpec("P")
 
 FunctionType = TypeVar("FunctionType", bound=Callable[..., Any])
 
@@ -24,7 +27,7 @@ def function(
 
 def function(
     f: Optional[FunctionType] = None, *, strict: bool = True
-) -> Callable[[FunctionType], FunctionType] | FunctionType:
+) -> Callable[[Callable[P, T]], Callable[P, T]] | FunctionType:
 
     r"""Wraps the decorated function in its own portable environment.
 
@@ -65,14 +68,14 @@ def function(
        ~otf.compiler.Closure:
     """
 
-    def wrapper(f: FunctionType) -> FunctionType:
+    def wrapper(f: Callable[P, T]) -> Callable[P, T]:
         env: Optional[compiler.Environment] = getattr(f, "_otf_env", None)
         if env is None:
             env = compiler.Environment()
-        wrapped = env.function(f)
+        wrapped: compiler.Closure[P, T] = env.function(f)
         if strict:
             universe = {*dir(builtins), *env}
-            parsed = typing.cast(compiler.Closure[Any], wrapped).origin
+            parsed = wrapped.origin
             infos = analyze.visit_function(parsed)
             for name, origin in infos.free_vars.items():
                 if name not in universe:

@@ -9,7 +9,15 @@ import os
 import re
 import tempfile
 import typing
-from typing import Any, Callable, Optional, TypedDict, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Optional,
+    ParamSpec,
+    TypedDict,
+    TypeVar,
+)
 
 #
 # This module contains code adapted from cpython's inspect.py. This code was
@@ -19,6 +27,7 @@ __all__ = ("Function",)
 
 
 T = TypeVar("T")
+P = ParamSpec("P")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -263,7 +272,7 @@ class ExplodedFunction(TypedDict, total=True):
 
 
 @dataclasses.dataclass(frozen=True)
-class Function:
+class Function(Generic[P, T]):
     """The string representation of the function in body is constructed to keep all
     the preserve the positions between the node from the original source. It is
     not necessarily valid python::
@@ -327,7 +336,7 @@ class Function:
         return "".join(fn_lines).rstrip()
 
     @classmethod
-    def from_function(cls, fn: Callable[..., Any]) -> "Function":
+    def from_function(cls, fn: Callable[P, T]) -> "Function[P, T]":
         """Construct from an existing python function"""
         # We could use a naive:
         #
@@ -397,7 +406,7 @@ class _DotDotDot:
 DOT_DOT_DOT = _DotDotDot()
 
 
-def _explode_function(fn: Function) -> ExplodedFunction:
+def _explode_function(fn: Function[Any, Any]) -> ExplodedFunction:
     return {
         "name": fn.name,
         "signature": _explode_signature(fn.signature),
@@ -463,7 +472,7 @@ def _fill_linecache(data: str) -> str:
 
 def _gen_function(
     name: str, body: str, signature: inspect.Signature
-) -> Function:
+) -> Function[Any, Any]:
     fun_str = _gen_imploded_function_str(
         name=name, body=body, signature=signature
     )
@@ -478,7 +487,7 @@ def _gen_function(
     )
 
 
-def _implode_function(exploded: ExplodedFunction) -> Function:
+def _implode_function(exploded: ExplodedFunction) -> Function[Any, Any]:
     signature = _implode_signature(exploded["signature"])
     return _gen_function(
         name=exploded["name"], body=exploded["body"], signature=signature

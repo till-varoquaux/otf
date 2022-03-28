@@ -8,7 +8,7 @@ import inspect
 import itertools
 import types
 import typing
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from otf import parser, utils
 
@@ -181,7 +181,7 @@ def visit_node(node: ast.AST, filename: str) -> AstInfos:
     return _get_visitor(filename).visit(node)
 
 
-def visit_function(fn: parser.Function) -> AstInfos:
+def visit_function(fn: parser.Function[Any, Any]) -> AstInfos:
     visitor = _get_visitor(fn.filename)
     acc = AstInfos(bound_vars=types.MappingProxyType(fn.signature.parameters))
     for stmt in fn.statements:
