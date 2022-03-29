@@ -69,7 +69,7 @@ def _check_fields_attributes(e, path):
             assert fld_v is not MISSING, f"At {path}: {e} missing {fld}"
             _check_fields_attributes(fld_v, [*path, fld])
     else:
-        raise TypeError(f"At: {path}, {type(e)}")
+        raise TypeError(f"At: {path}, {type(e)}: {e}")
 
 
 def assert_eq_ast(fst, *rest):
@@ -83,12 +83,15 @@ def assert_eq_ast(fst, *rest):
         _check_ast_eq(reference, stmts, [])
 
 
+def drill(nodes, path):
+    for elt in path:
+        if isinstance(elt, int):
+            nodes = nodes[elt]
+        else:
+            nodes = getattr(nodes, elt)
+    return nodes
+
+
 def dump(x, *path):
-    nodes = _to_stmts(x)
-    if path is not None:
-        for elt in path:
-            if isinstance(elt, int):
-                nodes = nodes[elt]
-            else:
-                nodes = getattr(nodes, elt)
+    nodes = drill(_to_stmts(x), path)
     assert False, explode_ast(nodes)

@@ -196,22 +196,23 @@ def wf(_otf_variables, _otf_pos, _otf_val):
         x = _otf_variables['x']
     if 'y' in _otf_variables:
         y = _otf_variables['y']
-    match _otf_pos:
-        case 0:
-            (a_, b_) = (f1(x), f2(y))
-            return _otf_suspend(position=1, variables=locals(), awaiting=b_)
-        case 1:
-            b = _otf_val
-            return _otf_suspend(position=2, variables=locals(), awaiting=a_)
-        case 2:
-            a = _otf_val
-            return _otf_suspend(
-              position=3,
-              variables=locals(),
-              awaiting=sleep(5)
-            )
-        case 3:
-            return a + b
+    while True:
+        match _otf_pos:
+            case 0:
+                (a_, b_) = (f1(x), f2(y))
+                return _otf_suspend(position=1, variables=locals(), awaiting=b_)
+            case 1:
+                b = _otf_val
+                return _otf_suspend(position=2, variables=locals(), awaiting=a_)
+            case 2:
+                a = _otf_val
+                return _otf_suspend(
+                  position=3,
+                  variables=locals(),
+                  awaiting=sleep(5)
+                )
+            case 3:
+                return a + b
 """
 
 
@@ -234,12 +235,99 @@ def test_compile_workflow():
     utils.assert_eq_ast([compiler._mk_function_def(comp)], COMPILED)
 
 
+COMPILED_IF = """
+def wf(_otf_variables, _otf_pos, _otf_val):
+    if 'x' in _otf_variables:
+        x = _otf_variables['x']
+    if 'y' in _otf_variables:
+        y = _otf_variables['y']
+    while True:
+        match _otf_pos:
+            case 0:
+                if x is not None:
+                    return _otf_suspend(
+                        position=1,
+                        variables=locals(),
+                        awaiting=y(x),
+                    )
+                else:
+                    _otf_pos = -1
+                    continue
+            case 1:
+                x = _otf_val
+                _otf_pos = -1
+                continue
+            case -1:
+                return x
+"""
+
+
+def test_compile_workflow_if():
+    async def wf(x, y):
+        if x is not None:
+            x = await y(x)
+        return x
+
+    e = compiler.Environment(
+        f1=lambda x: x,
+        f2=lambda y: y,
+    )
+
+    comp = compiler.compile_worflow(
+        parser.Function.from_function(wf), environment=e
+    )
+    utils.assert_eq_ast([compiler._mk_function_def(comp)], COMPILED_IF)
+
+
+EXPECTED_IMPLICIT_RETURN = """
+def wf(_otf_variables, _otf_pos, _otf_val):
+    if 'x' in _otf_variables:
+        x = _otf_variables['x']
+    if 'y' in _otf_variables:
+        y = _otf_variables['y']
+    while True:
+        match _otf_pos:
+            case 0:
+                return _otf_suspend(
+                    position=1,
+                    variables=locals(),
+                    awaiting=x(y)
+                )
+            case 1:
+                return
+"""
+
+
+def test_compile_workflow_implicit_return():
+    async def wf(x, y):
+        await x(y)
+
+    e = compiler.Environment(
+        f1=lambda x: x,
+        f2=lambda y: y,
+    )
+
+    comp = compiler.compile_worflow(
+        parser.Function.from_function(wf), environment=e
+    )
+    utils.assert_eq_ast(
+        [compiler._mk_function_def(comp)], EXPECTED_IMPLICIT_RETURN
+    )
+
+
 def test_workflow_bad_await():
     async def wf(y):
         if await y:
             return 5
 
     e = compiler.Environment()
+
+    with pytest.raises(SyntaxError):
+        e.workflow(wf)
+
+    async def wf(y):
+        for i in y:
+            await i
 
     with pytest.raises(SyntaxError):
         e.workflow(wf)

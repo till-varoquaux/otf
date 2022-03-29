@@ -1,3 +1,4 @@
+import abc
 import ast
 import collections
 import contextvars
@@ -11,6 +12,7 @@ from typing import (
     Callable,
     ClassVar,
     Generic,
+    Iterable,
     Mapping,
     Optional,
     ParamSpec,
@@ -306,17 +308,112 @@ class Template:
         return [exp.expand(s) for s in self.statements]
 
 
-@dataclasses.dataclass()
-class WorkflowStep:
+# We use "anchors" to generate code: anchor are node whose position we use in
+# the code generation. Their only purpose is to make sure that errors get
+# reported at a sensible location. Sometimes we do not care about positions
+# either because there is no risk of an error being thrown in the generated code
+# or because we do not have a node to tie the generated code too. This is the
+# default anchor we use for these cases.
+ANCHOR = ast.Pass(
+    lineno=0,
+    col_offset=0,
+    end_lineno=0,
+    end_col_offset=0,
+)
+
+
+def int_const(value: int, anchor: ast.AST = ANCHOR) -> ast.expr:
+    """Create a integer constant
+
+    python 3.10 parses negative int constants (e.g.: in ``case -1:...``) as the
+    ``-`` operator applied to a positive int. We want our generated ast to match
+    what would have been produced by the parser.
+
+    """
+    base = ast.Constant(
+        kind=None,
+        value=abs(value),
+        lineno=anchor.lineno,
+        col_offset=anchor.col_offset,
+        end_lineno=anchor.end_lineno,
+        end_col_offset=anchor.col_offset,
+    )
+    if value >= 0:
+        return base
+    return ast.UnaryOp(
+        op=ast.USub(),
+        operand=base,
+        lineno=anchor.lineno,
+        col_offset=anchor.col_offset,
+        end_lineno=anchor.end_lineno,
+        end_col_offset=anchor.col_offset,
+    )
+
+
+# Workflow generation: Async workflows are compiled to state machines where the
+# continuation of every await is in its own state. Those state machines are then
+# translate to a ``match `` statements that dispatches to the right state.
+
+
+class Transition(abc.ABC):
+    """Async state machine transition"""
+
+    @abc.abstractmethod
+    def emit(self) -> list[ast.stmt]:  # pragma: no cover
+        ...
+
+
+class Exit(Transition):
+    """Marks a node as final.
+
+    The state machine will halt when hitting an Exit transition.
+    """
+
+    def emit(self) -> list[ast.stmt]:
+        return [
+            ast.Return(
+                value=None,
+                lineno=0,
+                col_offset=0,
+                end_lineno=0,
+                end_col_offset=0,
+            )
+        ]
+
+
+class CodeBlock:
+    """A block of code that ends in a state machine transition."""
+
+    filename: str
+    statements: list[ast.stmt]
+    out_transition: Transition
+
+    def __init__(self, filename: str) -> None:
+        self.statements = []
+        self.filename = filename
+        self.out_transition = Exit()
+
+    def append(self, e: ast.stmt) -> None:
+        self.statements.append(e)
+
+    def get_body(self) -> list[ast.stmt]:
+        if analyze.visit_block(self.statements, filename=self.filename).exits:
+            return self.statements
+        return [*self.statements, *self.out_transition.emit()]
+
+
+class WorkflowState(CodeBlock):
+    """A State in the state machine
+
+    Unlike a normal :class:`CodeBlock` a State can be jumped to and will be
+    compiled as a ``case ..``
+    """
 
     idx: int
-    statements: list[ast.stmt] = dataclasses.field(default_factory=list)
 
-    def append(self, e: ast.stmt | list[ast.stmt]) -> None:
-        if isinstance(e, list):
-            self.statements.extend(e)
-        else:
-            self.statements.append(e)
+    def __init__(self, filename: str, idx: int) -> None:
+        super().__init__(filename)
+        self.idx = idx
 
     def as_case(self) -> ast.match_case:
         return ast.match_case(
@@ -327,30 +424,99 @@ class WorkflowStep:
                     col_offset=1,
                     end_lineno=0,
                     end_col_offset=1,
-                    value=ast.Constant(
-                        kind=None,
-                        value=self.idx,
-                        lineno=0,
-                        col_offset=1,
-                        end_lineno=0,
-                        end_col_offset=1,
-                    ),
+                    value=int_const(self.idx),
                 )
             ),
-            body=self.statements,
+            body=self.get_body(),
+        )
+
+
+class PrivateState(WorkflowState):
+    pass
+
+
+AssignTemplate = Template("__var_dest = _otf_val")
+
+
+class PublicState(WorkflowState):
+    """State that can be jumped to from outside the sate machines
+
+    These states are either the node or places where we resume from an ``await``
+    statement.
+
+    """
+
+    assign: Optional[ast.expr]
+
+    def __init__(
+        self, filename: str, idx: int, assign: Optional[ast.expr] = None
+    ) -> None:
+        super().__init__(filename, idx)
+        self.assign = assign
+
+    def get_body(self) -> list[ast.stmt]:
+        body = super().get_body()
+        if self.assign is not None:
+            return [*AssignTemplate(self.assign, dest=self.assign), *body]
+        return body
+
+
+@dataclasses.dataclass
+class Conditional(Transition):
+    anchor: ast.stmt
+    test: ast.expr
+    body: CodeBlock
+    orelse: CodeBlock
+
+    def emit(self) -> list[ast.stmt]:
+        return [
+            ast.If(
+                test=self.test,
+                body=self.body.get_body(),
+                orelse=self.orelse.get_body(),
+                lineno=self.anchor.lineno,
+                col_offset=self.anchor.col_offset,
+                end_lineno=self.anchor.end_lineno,
+                end_col_offset=self.anchor.end_col_offset,
+            ),
+        ]
+
+
+GotoTemplate = Template("_otf_pos = __var_dest\n" "continue")
+
+
+@dataclasses.dataclass
+class Jump(Transition):
+    anchor: ast.stmt
+    dest: WorkflowState
+
+    def emit(self) -> list[ast.stmt]:
+        return GotoTemplate(
+            self.anchor, dest=int_const(anchor=self.anchor, value=self.dest.idx)
         )
 
 
 SuspendTemplate = Template(
     # fmt: off
     "return _otf_suspend("
-    "position=__var_dest, variables=locals(), awaiting=__var_value"
+    "  position=__var_dest, variables=locals(), awaiting=__var_value"
     ")"
     # fmt: on
 )
 
 
-AssignTemplate = Template("__var_dest = _otf_val")
+@dataclasses.dataclass
+class Suspend(Transition):
+    awaiting: ast.expr
+    dest: PublicState
+
+    def emit(self) -> list[ast.stmt]:
+        return SuspendTemplate(
+            self.awaiting,
+            dest=int_const(anchor=self.awaiting, value=self.dest.idx),
+            value=self.awaiting,
+        )
+
 
 InitTemplate = Template(
     "if __var_srep in _otf_variables: "
@@ -363,36 +529,79 @@ class WorkflowCompiler:
 
     src: parser.Function[Any, Any]
     environment: Mapping[str, Any]
-    steps: list[WorkflowStep] = dataclasses.field(
-        default_factory=lambda: [WorkflowStep(0)]
-    )
+    states: list[WorkflowState]
+    public_states: int
+    private_states: int
+
+    def __init__(
+        self, src: parser.Function[Any, Any], environment: Mapping[str, Any]
+    ) -> None:
+        self.src = src
+        self.environment = environment
+        self.states = []
+        self.public_states = 0
+        self.private_states = 0
+        self.add_public_state()
 
     @property
     def filename(self) -> str:
         return self.src.filename
 
-    @property
-    def current(self) -> WorkflowStep:
-        return self.steps[-1]
+    def add_public_state(
+        self, assign: Optional[ast.expr] = None
+    ) -> PublicState:
+        idx = self.public_states
+        self.public_states += 1
+        state = PublicState(filename=self.src.filename, idx=idx, assign=assign)
+        self.states.append(state)
+        return state
 
-    def add_step(self) -> WorkflowStep:
-        step = WorkflowStep(len(self.steps))
-        self.steps.append(step)
-        return step
+    def add_private_state(self) -> PrivateState:
+        self.private_states += 1
+        idx = -self.private_states
+        state = PrivateState(filename=self.src.filename, idx=idx)
+        self.states.append(state)
+        return state
 
-    def handle(self, node: ast.stmt) -> None:
+    def codeblock(self) -> CodeBlock:
+        return CodeBlock(self.src.filename)
+
+    def handle(self, node: ast.stmt, current: CodeBlock) -> CodeBlock:
         infos = analyze.visit_node(node, filename=self.filename)
         if infos.async_ctrl is None:
-            self.current.append(node)
-            return
+            current.append(node)
+            return current
         match node:
             case ast.Assign(targets=targets, value=ast.Await(value=value)):
                 assert len(targets) == 1, ast.unparse(node)
-                self.emit_suspend(target=targets[0], value=value)
+                return self.emit_suspend(
+                    target=targets[0], value=value, origin=current
+                )
             case ast.AnnAssign(target=target, value=ast.Await(value=value)):
-                self.emit_suspend(target=target, value=value)
+                return self.emit_suspend(
+                    target=target, value=value, origin=current
+                )
             case ast.Expr(ast.Await(value=value)):  # type: ignore[misc]
-                self.emit_suspend(target=None, value=value)
+                return self.emit_suspend(
+                    target=None, value=value, origin=current
+                )
+            case ast.If(test=test, body=body, orelse=orelse):
+                self.assert_sync(test)
+                body_start = self.codeblock()
+                else_start = self.codeblock()
+                current.out_transition = Conditional(
+                    anchor=node,
+                    test=test,
+                    body=body_start,
+                    orelse=else_start,
+                )
+                body_end = self.compile_list(body, current=body_start)
+                else_end = self.compile_list(orelse, current=else_start)
+                join = self.add_private_state()
+                goto = Jump(anchor=node, dest=join)
+                body_end.out_transition = goto
+                else_end.out_transition = goto
+                return join
             case _:
                 utils.syntax_error(
                     msg="Await not supported here",
@@ -400,16 +609,28 @@ class WorkflowCompiler:
                     node=infos.async_ctrl,
                 )
 
-    def emit_suspend(self, target: Optional[ast.expr], value: ast.expr) -> None:
-        origin = self.current
-        dest = self.add_step()
-        origin.append(
-            SuspendTemplate(
-                value, dest=ast.Constant(dest.idx, kind=None), value=value
+    def compile_list(
+        self, statements: Iterable[ast.stmt], current: CodeBlock
+    ) -> CodeBlock:
+        for stmt in statements:
+            current = self.handle(stmt, current)
+        return current
+
+    def assert_sync(self, node: ast.AST) -> None:
+        infos = analyze.visit_node(node, filename=self.filename)
+        if infos.async_ctrl is not None:
+            utils.syntax_error(
+                msg="Await not supported here",
+                filename=self.filename,
+                node=infos.async_ctrl,
             )
-        )
-        if target is not None:
-            dest.append(AssignTemplate(target, dest=target))
+
+    def emit_suspend(
+        self, target: Optional[ast.expr], value: ast.expr, origin: CodeBlock
+    ) -> PublicState:
+        dest = self.add_public_state(assign=target)
+        origin.out_transition = Suspend(awaiting=value, dest=dest)
+        return dest
 
     def link(self) -> parser.Function[Any, Any]:
         infos = analyze.visit_function(self.src)
@@ -429,21 +650,39 @@ class WorkflowCompiler:
                     dest=ast.Name(x, ctx=ast.Store()),
                 )
             )
-        body.append(
-            ast.Match(
+        match_stmt = ast.Match(
+            lineno=self.src.lineno,
+            col_offset=self.src.col_offset,
+            end_lineno=self.src.end_lineno,
+            end_col_offset=self.src.end_col_offset,
+            subject=ast.Name(
+                id="_otf_pos",
+                ctx=ast.Load(),
                 lineno=self.src.lineno,
                 col_offset=self.src.col_offset,
                 end_lineno=self.src.end_lineno,
                 end_col_offset=self.src.end_col_offset,
-                subject=ast.Name(
-                    id="_otf_pos",
-                    ctx=ast.Load(),
-                    lineno=self.src.lineno,
-                    col_offset=self.src.col_offset,
-                    end_lineno=self.src.end_lineno,
-                    end_col_offset=self.src.end_col_offset,
-                ),
-                cases=[x.as_case() for x in self.steps],
+            ),
+            cases=[x.as_case() for x in self.states],
+        )
+        true = ast.Constant(
+            kind=None,
+            value=True,
+            lineno=self.src.lineno,
+            col_offset=self.src.col_offset,
+            end_lineno=self.src.end_lineno,
+            end_col_offset=self.src.end_col_offset,
+        )
+
+        body.append(
+            ast.While(
+                test=true,
+                body=[match_stmt],
+                orelse=[],
+                lineno=self.src.lineno,
+                col_offset=self.src.col_offset,
+                end_lineno=self.src.end_lineno,
+                end_col_offset=self.src.end_col_offset,
             )
         )
 
@@ -467,8 +706,7 @@ def compile_worflow(
     fn: parser.Function[Any, T], environment: Mapping[str, Any]
 ) -> parser.Function[Any, T | "Suspension"]:
     wfc = WorkflowCompiler(fn, environment=environment)
-    for stmt in fn.statements:
-        wfc.handle(stmt)
+    wfc.compile_list(fn.statements, current=wfc.states[0])
     return wfc.link()
 
 

@@ -1,9 +1,12 @@
 import ast
+import functools
 import inspect
 
 import pytest
 
 from otf import analyze, parser
+
+from . import utils
 
 
 class Instance:
@@ -18,6 +21,23 @@ ANY_NAME = Instance(ast.Name)
 ANY_PARAMETER = Instance(inspect.Parameter)
 
 
+@functools.cache
+def parse(f):
+    return parser.Function.from_function(f)
+
+
+def visit(fn):
+    return analyze.visit_function(parse(fn))
+
+
+def visit_node(fn, *path):
+    ff = parse(fn)
+    tgt = utils.drill(ff.statements, path)
+    if isinstance(tgt, list):
+        return analyze.visit_block(tgt, filename=ff.filename)
+    return analyze.visit_node(tgt, filename=ff.filename)
+
+
 def test_visit():
     async def f(**foo):
         global c
@@ -29,8 +49,7 @@ def test_visit():
         c += 1
         print(foo)
 
-    ff = parser.Function.from_function(f)
-    assert analyze.visit_function(ff) == analyze.AstInfos(
+    assert visit(f) == analyze.AstInfos(
         async_ctrl=Instance(ast.Await),
         bound_vars={
             "foo": ANY_PARAMETER,
@@ -44,27 +63,54 @@ def test_visit():
         },
     )
 
-    assert analyze.visit_node(
-        ff.statements[1], ff.filename
-    ) == analyze.AstInfos(bound_vars={"foo": ANY_NAME})
+    visit_node(f, 1) == analyze.AstInfos(bound_vars={"foo": ANY_NAME})
+
+
+def test_reachable():
+    def f(x):
+        if x > 5:
+            raise ValueError("Too big")
+        else:
+            return
+        return 5
+
+    with pytest.raises(SyntaxError, match="Unreachable code"):
+        visit(f)
+
+    def f(x):
+        if x > 5:
+            return True
+        return False
+
+    visit(f)
+
+    def f(x):
+        while True:
+            x = 5
+            if x:
+                break
+            else:
+                continue
+
+    assert visit(f).exits is False
+    assert visit_node(f, 0).exits is False
+    assert visit_node(f, 0, "body").exits is True
 
 
 def test_internal_variable():
     def f():
         return _otf_var  # noqa: F821
 
-    ff = parser.Function.from_function(f)
-    with pytest.raises(SyntaxError):
-        analyze.visit_function(ff)
+    with pytest.raises(SyntaxError, match="reserved for the otf runtime"):
+        visit(f)
 
 
 def test_assign_builtins():
     def f():
         print = 1  # noqa: F841
 
-    ff = parser.Function.from_function(f)
-    with pytest.raises(SyntaxError):
-        analyze.visit_function(ff)
+    with pytest.raises(SyntaxError, match="Modifying builtins"):
+        visit(f)
 
 
 SYNTAX_ERROR = """\
@@ -84,6 +130,5 @@ def test_visit_error():
         class K:
             pass
 
-    ff = parser.Function.from_function(f)
-    with pytest.raises(SyntaxError):
-        analyze.visit_function(ff)
+    with pytest.raises(SyntaxError, match="'class' not supported"):
+        visit(f)

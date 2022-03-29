@@ -8,7 +8,7 @@ import inspect
 import itertools
 import types
 import typing
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from otf import parser, utils
 
@@ -24,6 +24,8 @@ class AstInfos:
         str, ast.Name | inspect.Parameter
     ] = types.MappingProxyType({})
     free_vars: Mapping[str, ast.Name | ast.Global] = types.MappingProxyType({})
+    # If True the code after this statement is unreachable
+    exits: bool = False
 
     def __iadd__(self, other: "AstInfos") -> "AstInfos":
         if self is _EMPTY_INFOS:
@@ -56,6 +58,7 @@ class AstInfos:
             async_ctrl=self.async_ctrl or other.async_ctrl,
             bound_vars=types.MappingProxyType(bound_vars),
             free_vars=types.MappingProxyType(free_vars),
+            exits=False,
         )
 
     def _is_global(self, k: str) -> bool:
@@ -94,6 +97,43 @@ class AstInfosCollector(ast.NodeVisitor):
         for node in ast.iter_child_nodes(node):
             acc += self.visit(node)
         return acc
+
+    def visit_Return(self, node: ast.Return) -> AstInfos:
+        if node.value is None:
+            return AstInfos(exits=True)
+        return dataclasses.replace(self.visit(node.value), exits=True)
+
+    def visit_Raise(self, node: ast.Raise) -> AstInfos:
+        return dataclasses.replace(self.generic_visit(node), exits=True)
+
+    def visit_Break(self, node: ast.Break) -> AstInfos:
+        return AstInfos(exits=True)
+
+    def visit_Continue(self, node: ast.Continue) -> AstInfos:
+        return AstInfos(exits=True)
+
+    def visit_block(self, stmts: Iterable[ast.stmt]) -> AstInfos:
+        acc = _EMPTY_INFOS
+        exits = False
+        for node in stmts:
+            if exits:
+                utils.syntax_error(
+                    "Unreachable code",
+                    filename=self._filename,
+                    node=node,
+                )
+            infos = self.visit(node)
+            acc += infos
+            exits = infos.exits
+        return dataclasses.replace(acc, exits=exits)
+
+    def visit_If(self, node: ast.If) -> AstInfos:
+        acc = self.visit(node.test)
+        body = self.visit_block(node.body)
+        orelse = self.visit_block(node.orelse)
+        acc += body
+        acc += orelse
+        return dataclasses.replace(acc, exits=body.exits and orelse.exits)
 
     def visit_Name(self, node: ast.Name) -> AstInfos:
         ctx_ty = type(node.ctx)
@@ -181,9 +221,12 @@ def visit_node(node: ast.AST, filename: str) -> AstInfos:
     return _get_visitor(filename).visit(node)
 
 
+def visit_block(block: Iterable[ast.stmt], filename: str) -> AstInfos:
+    return _get_visitor(filename).visit_block(block)
+
+
 def visit_function(fn: parser.Function[Any, Any]) -> AstInfos:
     visitor = _get_visitor(fn.filename)
     acc = AstInfos(bound_vars=types.MappingProxyType(fn.signature.parameters))
-    for stmt in fn.statements:
-        acc += visitor.visit(stmt)
-    return acc
+    acc += visitor.visit_block(fn.statements)
+    return dataclasses.replace(acc, exits=False)
