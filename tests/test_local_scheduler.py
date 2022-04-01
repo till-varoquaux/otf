@@ -20,14 +20,15 @@ def test():
         return True
 
     @e.workflow
-    async def check_five():
-        f1, f2, f3, f4, f5 = (defer(is_prime, x) for x in (1, 2, 3, 4, 5))
-        v1 = await f1
-        v2 = await f2
-        v3 = await f3
-        v4 = await f4
-        v5 = await f5
-        return v1, v2, v3, v4, v5
+    async def check(*vals: int) -> list[bool]:
+        """Check for prime numbers in a list of values"""
+        res = []
+        futures = [defer(is_prime, x) for x in vals]
+        while futures:
+            elt = await futures.pop(0)
+            res.append(elt)
+            del elt
+        return res
 
     assert e["is_prime"](5)
     assert not e["is_prime"](4)
@@ -36,5 +37,5 @@ def test():
         t = local_scheduler.defer(is_prime, 5)
         assert t.result() is True
 
-    r = local_scheduler.run(check_five)
-    assert r == (True, False, True, False, True)
+    r = local_scheduler.run(check, 1, 2, 3, 4, 5)
+    assert r == [True, False, True, False, True]

@@ -2,6 +2,7 @@ import abc
 import ast
 import collections
 import contextvars
+import copy
 import dataclasses
 import functools
 import inspect
@@ -381,25 +382,112 @@ class Exit(Transition):
         ]
 
 
+Loop = TypeVar("Loop", bound=ast.While | ast.For)
+
+
+@dataclasses.dataclass
+class LoopCtrlRewriter(ast.NodeTransformer):
+    "Rewrite all the top level ``continue`` and ``break`` statements to jumps."
+
+    filename: str
+    break_state: Optional["WorkflowState"]
+    continue_state: Optional["WorkflowState"]
+
+    def visit_block(self, stmts: list[ast.stmt]) -> list[ast.stmt]:
+        res = []
+        for stmt in stmts:
+            expanded = self.visit(stmt)
+            if isinstance(expanded, list):
+                res.extend(expanded)
+            else:
+                res.append(expanded)
+        return res
+
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        infos = analyze.visit_node(node, filename=self.filename)
+        if not infos.has_break and not infos.has_continue:
+            return node
+        return super().generic_visit(copy.copy(node))
+
+    def visit_loop(self, node: Loop) -> Loop:
+        node = copy.copy(node)
+        node.orelse = self.visit_block(node.orelse)
+        return node
+
+    visit_For = visit_While = visit_loop
+
+    def visit_Break(self, node: ast.Break) -> list[ast.stmt]:
+        assert self.break_state is not None
+        assert self.break_state.idx is not None
+        return GotoTemplate(
+            node, dest=int_const(anchor=node, value=self.break_state.idx)
+        )
+
+    def visit_Continue(self, node: ast.Continue) -> list[ast.stmt]:
+        assert self.continue_state is not None
+        assert self.continue_state.idx is not None
+        return GotoTemplate(
+            node, dest=int_const(anchor=node, value=self.continue_state.idx)
+        )
+
+
+TCodeBlock = TypeVar("TCodeBlock", bound="CodeBlock")
+
+
 class CodeBlock:
     """A block of code that ends in a state machine transition."""
 
     filename: str
     statements: list[ast.stmt]
-    out_transition: Transition
+    out_transition: Optional[Transition]
+    break_state: Optional["WorkflowState"]
+    continue_state: Optional["WorkflowState"]
+    _sealed: bool
 
-    def __init__(self, filename: str) -> None:
+    def __init__(
+        self,
+        filename: str,
+        break_state: Optional["WorkflowState"],
+        continue_state: Optional["WorkflowState"],
+    ) -> None:
         self.statements = []
         self.filename = filename
-        self.out_transition = Exit()
+        self.out_transition = None
+        self.break_state = break_state
+        self.continue_state = continue_state
+        self._sealed = False
 
     def append(self, e: ast.stmt) -> None:
+        assert not self._sealed
         self.statements.append(e)
 
     def get_body(self) -> list[ast.stmt]:
-        if analyze.visit_block(self.statements, filename=self.filename).exits:
-            return self.statements
-        return [*self.statements, *self.out_transition.emit()]
+        assert self._sealed
+        res = self.statements
+        if self.break_state or self.continue_state:
+            loop_rewritter = LoopCtrlRewriter(
+                self.filename,
+                break_state=self.break_state,
+                continue_state=self.continue_state,
+            )
+            res = loop_rewritter.visit_block(self.statements)
+        else:
+            res = self.statements[:]
+        if self.out_transition is not None:
+            res.extend(self.out_transition.emit())
+        return res
+
+    def seal(self: TCodeBlock, out_transition: Transition) -> TCodeBlock:
+        self.out_transition = out_transition
+        self._sealed = True
+        infos = analyze.visit_block(self.statements, filename=self.filename)
+        if infos.exits:
+            self.out_transition = None
+        if not infos.has_continue:
+            self.continue_state = None
+        if not infos.has_break:
+            self.break_state = None
+        return self
 
 
 class WorkflowState(CodeBlock):
@@ -411,8 +499,14 @@ class WorkflowState(CodeBlock):
 
     idx: int
 
-    def __init__(self, filename: str, idx: int) -> None:
-        super().__init__(filename)
+    def __init__(
+        self,
+        filename: str,
+        idx: int,
+        break_state: Optional["WorkflowState"],
+        continue_state: Optional["WorkflowState"],
+    ) -> None:
+        super().__init__(filename, break_state, continue_state)
         self.idx = idx
 
     def as_case(self) -> ast.match_case:
@@ -449,9 +543,19 @@ class PublicState(WorkflowState):
     assign: Optional[ast.expr]
 
     def __init__(
-        self, filename: str, idx: int, assign: Optional[ast.expr] = None
+        self,
+        filename: str,
+        idx: int,
+        break_state: Optional["WorkflowState"],
+        continue_state: Optional["WorkflowState"],
+        assign: Optional[ast.expr],
     ) -> None:
-        super().__init__(filename, idx)
+        super().__init__(
+            filename,
+            idx,
+            break_state=break_state,
+            continue_state=continue_state,
+        )
         self.assign = assign
 
     def get_body(self) -> list[ast.stmt]:
@@ -524,47 +628,89 @@ InitTemplate = Template(
 )
 
 
-@dataclasses.dataclass()
-class WorkflowCompiler:
-
+@dataclasses.dataclass
+class _FsmState:
     src: parser.Function[Any, Any]
     environment: Mapping[str, Any]
     states: list[WorkflowState]
     public_states: int
     private_states: int
 
-    def __init__(
-        self, src: parser.Function[Any, Any], environment: Mapping[str, Any]
-    ) -> None:
-        self.src = src
-        self.environment = environment
-        self.states = []
-        self.public_states = 0
-        self.private_states = 0
-        self.add_public_state()
-
     @property
     def filename(self) -> str:
         return self.src.filename
 
-    def add_public_state(
-        self, assign: Optional[ast.expr] = None
+    def mk_public_state(
+        self,
+        assign: Optional[ast.expr],
+        break_state: Optional[WorkflowState],
+        continue_state: Optional[WorkflowState],
     ) -> PublicState:
         idx = self.public_states
         self.public_states += 1
-        state = PublicState(filename=self.src.filename, idx=idx, assign=assign)
+        state = PublicState(
+            filename=self.filename,
+            idx=idx,
+            assign=assign,
+            break_state=break_state,
+            continue_state=continue_state,
+        )
         self.states.append(state)
         return state
 
-    def add_private_state(self) -> PrivateState:
+    def mk_private_state(
+        self,
+        break_state: Optional[WorkflowState],
+        continue_state: Optional[WorkflowState],
+    ) -> PrivateState:
         self.private_states += 1
         idx = -self.private_states
-        state = PrivateState(filename=self.src.filename, idx=idx)
+        state = PrivateState(
+            filename=self.filename,
+            idx=idx,
+            break_state=break_state,
+            continue_state=continue_state,
+        )
         self.states.append(state)
         return state
 
-    def codeblock(self) -> CodeBlock:
-        return CodeBlock(self.src.filename)
+    def mk_codeblock(
+        self,
+        break_state: Optional[WorkflowState],
+        continue_state: Optional[WorkflowState],
+    ) -> CodeBlock:
+        return CodeBlock(
+            self.filename,
+            break_state=break_state,
+            continue_state=continue_state,
+        )
+
+
+class FsmCompiler(abc.ABC):
+    @property
+    @abc.abstractmethod
+    def filename(self) -> str:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def public_state(
+        self, assign: Optional[ast.expr] = None
+    ) -> PublicState:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def private_state(self) -> PrivateState:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def codeblock(self) -> CodeBlock:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def loop_compiler(
+        self, start: WorkflowState, stop: WorkflowState
+    ) -> "FsmCompiler":  # pragma: no cover
+        ...
 
     def handle(self, node: ast.stmt, current: CodeBlock) -> CodeBlock:
         infos = analyze.visit_node(node, filename=self.filename)
@@ -589,19 +735,50 @@ class WorkflowCompiler:
                 self.assert_sync(test)
                 body_start = self.codeblock()
                 else_start = self.codeblock()
-                current.out_transition = Conditional(
-                    anchor=node,
-                    test=test,
-                    body=body_start,
-                    orelse=else_start,
+                current.seal(
+                    Conditional(
+                        anchor=node,
+                        test=test,
+                        body=body_start,
+                        orelse=else_start,
+                    )
                 )
                 body_end = self.compile_list(body, current=body_start)
                 else_end = self.compile_list(orelse, current=else_start)
-                join = self.add_private_state()
+                join = self.private_state()
                 goto = Jump(anchor=node, dest=join)
-                body_end.out_transition = goto
-                else_end.out_transition = goto
+                body_end.seal(goto)
+                else_end.seal(goto)
                 return join
+            case ast.While(test=test, body=body, orelse=orelse):
+                self.assert_sync(test)
+                if orelse:
+                    # Even guido thinks this feature was not worth having:
+                    # https://mail.python.org/pipermail/python-ideas/2009-October/006157.html
+                    utils.syntax_error(
+                        msg="While ... Else .. not supported",
+                        filename=self.filename,
+                        node=orelse[0],
+                    )
+                start = self.private_state()
+                stop = self.private_state()
+                goto_stop = Jump(anchor=node, dest=stop)
+                goto_start = Jump(anchor=node, dest=start)
+                current.seal(goto_start)
+                lc = self.loop_compiler(start=start, stop=stop)
+                body_start = lc.codeblock()
+                body_end = lc.compile_list(body, current=body_start).seal(
+                    goto_start
+                )
+                start.seal(
+                    Conditional(
+                        anchor=node,
+                        test=test,
+                        body=body_start,
+                        orelse=self.codeblock().seal(goto_stop),
+                    )
+                )
+                return stop
             case _:
                 utils.syntax_error(
                     msg="Await not supported here",
@@ -628,9 +805,70 @@ class WorkflowCompiler:
     def emit_suspend(
         self, target: Optional[ast.expr], value: ast.expr, origin: CodeBlock
     ) -> PublicState:
-        dest = self.add_public_state(assign=target)
-        origin.out_transition = Suspend(awaiting=value, dest=dest)
+        dest = self.public_state(assign=target)
+        origin.seal(Suspend(awaiting=value, dest=dest))
         return dest
+
+
+@dataclasses.dataclass
+class LoopCompiler(FsmCompiler):
+    fsm: _FsmState
+    start: WorkflowState
+    stop: WorkflowState
+
+    @property
+    def filename(self) -> str:
+        return self.fsm.src.filename
+
+    def public_state(self, assign: Optional[ast.expr] = None) -> PublicState:
+        return self.fsm.mk_public_state(
+            assign=assign, break_state=self.stop, continue_state=self.start
+        )
+
+    def private_state(self) -> PrivateState:
+        return self.fsm.mk_private_state(
+            break_state=self.stop, continue_state=self.start
+        )
+
+    def codeblock(self) -> CodeBlock:
+        return self.fsm.mk_codeblock(
+            break_state=self.stop, continue_state=self.start
+        )
+
+    def loop_compiler(
+        self, start: WorkflowState, stop: WorkflowState
+    ) -> FsmCompiler:
+        return LoopCompiler(fsm=self.fsm, start=start, stop=stop)
+
+
+class WorkflowCompiler(_FsmState, FsmCompiler):
+    def __init__(
+        self, src: parser.Function[Any, Any], environment: Mapping[str, Any]
+    ) -> None:
+        super().__init__(
+            src=src,
+            environment=environment,
+            states=[],
+            public_states=0,
+            private_states=0,
+        )
+        self.public_state()
+
+    def public_state(self, assign: Optional[ast.expr] = None) -> PublicState:
+        return self.mk_public_state(
+            assign=assign, break_state=None, continue_state=None
+        )
+
+    def private_state(self) -> PrivateState:
+        return self.mk_private_state(break_state=None, continue_state=None)
+
+    def codeblock(self) -> CodeBlock:
+        return self.mk_codeblock(break_state=None, continue_state=None)
+
+    def loop_compiler(
+        self, start: WorkflowState, stop: WorkflowState
+    ) -> FsmCompiler:
+        return LoopCompiler(fsm=self, start=start, stop=stop)
 
     def link(self) -> parser.Function[Any, Any]:
         infos = analyze.visit_function(self.src)
@@ -706,7 +944,8 @@ def compile_worflow(
     fn: parser.Function[Any, T], environment: Mapping[str, Any]
 ) -> parser.Function[Any, T | "Suspension"]:
     wfc = WorkflowCompiler(fn, environment=environment)
-    wfc.compile_list(fn.statements, current=wfc.states[0])
+    last = wfc.compile_list(fn.statements, current=wfc.states[0])
+    last.seal(Exit())
     return wfc.link()
 
 

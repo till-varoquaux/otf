@@ -26,6 +26,8 @@ class AstInfos:
     free_vars: Mapping[str, ast.Name | ast.Global] = types.MappingProxyType({})
     # If True the code after this statement is unreachable
     exits: bool = False
+    has_break: bool = False
+    has_continue: bool = False
 
     def __iadd__(self, other: "AstInfos") -> "AstInfos":
         if self is _EMPTY_INFOS:
@@ -59,6 +61,8 @@ class AstInfos:
             bound_vars=types.MappingProxyType(bound_vars),
             free_vars=types.MappingProxyType(free_vars),
             exits=False,
+            has_continue=self.has_continue or other.has_continue,
+            has_break=self.has_break or other.has_break,
         )
 
     def _is_global(self, k: str) -> bool:
@@ -107,10 +111,27 @@ class AstInfosCollector(ast.NodeVisitor):
         return dataclasses.replace(self.generic_visit(node), exits=True)
 
     def visit_Break(self, node: ast.Break) -> AstInfos:
-        return AstInfos(exits=True)
+        return AstInfos(exits=True, has_break=True)
 
     def visit_Continue(self, node: ast.Continue) -> AstInfos:
-        return AstInfos(exits=True)
+        return AstInfos(exits=True, has_continue=True)
+
+    def visit_For(self, node: ast.For) -> AstInfos:
+        acc = self.visit(node.iter)
+        acc += self.visit(node.target)
+        acc += dataclasses.replace(
+            self.visit_block(node.body), has_continue=False, has_break=False
+        )
+        acc += self.visit_block(node.orelse)
+        return acc
+
+    def visit_While(self, node: ast.While) -> AstInfos:
+        acc = self.visit(node.test)
+        acc += dataclasses.replace(
+            self.visit_block(node.body), has_continue=False, has_break=False
+        )
+        acc += self.visit_block(node.orelse)
+        return acc
 
     def visit_block(self, stmts: Iterable[ast.stmt]) -> AstInfos:
         acc = _EMPTY_INFOS

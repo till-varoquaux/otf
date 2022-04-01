@@ -1,8 +1,8 @@
 import ast
-import dataclasses
 import inspect
 import pickle
 import textwrap
+from unittest import mock
 
 import pytest
 
@@ -182,6 +182,38 @@ def test_pos_fill():
     assert stmt.value.lineno == 5
 
 
+LOOP_TEST_INPUT = r"""
+if x:
+  break
+for y in x:
+  if y:
+    break
+else:
+  continue
+"""
+
+LOOP_TEST_OUTPUT = r"""
+if x:
+    _otf_pos = 1
+    continue
+for y in x:
+    if y:
+        break
+else:
+    _otf_pos = 2
+    continue
+"""
+
+
+def test_loop_rewriter():
+    stmts = ast.parse(LOOP_TEST_INPUT).body
+    rewritter = compiler.LoopCtrlRewriter(
+        "<input>", mock.Mock(idx=1), mock.Mock(idx=2)
+    )
+    rewritten = rewritter.visit_block(stmts)
+    utils.assert_eq_ast(rewritten, LOOP_TEST_OUTPUT)
+
+
 COMPILED = r"""
 def wf(_otf_variables, _otf_pos, _otf_val):
     if 'a' in _otf_variables:
@@ -315,6 +347,74 @@ def test_compile_workflow_implicit_return():
     )
 
 
+EXPECTED_WHILE = """
+while True:
+    match _otf_pos:
+        case 0:
+            futs = [fn(x) for x in lst]
+            _otf_pos = -1
+            continue
+        case -1:
+            if futs:
+                return _otf_suspend(
+                  position=1,
+                  variables=locals(),
+                  awaiting=futs.pop()
+                )
+            else:
+                _otf_pos = -2
+                continue
+        case -2:
+            return
+        case 1:
+            v = _otf_val
+            if v:
+                _otf_pos = -2
+                continue
+            _otf_pos = -1
+            continue
+"""
+
+
+def test_compile_workflow_while():
+    async def wf(fn, lst):
+        futs = [fn(x) for x in lst]
+        while futs:
+            v = await futs.pop()
+            if v:
+                break
+        return
+
+    e = compiler.Environment()
+
+    comp = compiler.compile_worflow(
+        parser.Function.from_function(wf), environment=e
+    )
+    utils.assert_eq_ast(
+        [compiler._mk_function_def(comp).body[-1]], EXPECTED_WHILE
+    )
+
+
+def test_compile_workflow_bad_while():
+    async def wf(needle, haystack):
+        index = 0
+
+        while index < len(haystack):
+            item = await future(haystack[index])
+            if item == needle:
+                return index
+            index += 1
+        else:
+            return index - 1
+
+    e = compiler.Environment()
+
+    with pytest.raises(SyntaxError, match="While.* not supported"):
+        compiler.compile_worflow(
+            parser.Function.from_function(wf), environment=e
+        )
+
+
 def test_workflow_bad_await():
     async def wf(y):
         if await y:
@@ -333,32 +433,69 @@ def test_workflow_bad_await():
         e.workflow(wf)
 
 
-@dataclasses.dataclass
-class mul_fut:
-    x: int
-    y: int
-
-    @property
-    def value(self) -> int:
-        return self.x * self.y
+# Dummy scheduler to make testing easier
+class future:
+    def __init__(self, value):
+        self.value = value
 
 
-def test_workflow():
+def run(wf, *args, **kwargs):
+    if not isinstance(wf, compiler.Workflow):
+        e = compiler.Environment(future=future)
+        wf = e.workflow(wf)
+    trace = [wf(*args, **kwargs)]
+    while isinstance(trace[-1], compiler.Suspension):
+        copied = pickle.loads(pickle.dumps(trace[-1]))
+        trace.append(copied.resume(copied.awaiting.value))
+    return trace
 
-    e = compiler.Environment(
-        mul_fut=mul_fut,
-    )
 
+def test_simple_workflow():
     async def wf(x, y):
-        a_, b_ = mul_fut(x, 2), mul_fut(y, 3)  # noqa: F821
+        a_, b_ = future(x * 2), future(y * 3)  # noqa: F821
         b = await b_
         a = await a_
         return a + b
 
-    wf = e.workflow(wf)
-    # We write a very naive scheduler that keeps all the suspensions in a list
-    trace = [wf(x=5, y=6)]
-    while isinstance(trace[-1], compiler.Suspension):
-        copied = pickle.loads(pickle.dumps(trace[-1]))
-        trace.append(copied.resume(copied.awaiting.value))
+    trace = run(wf, x=5, y=6)
     assert trace[-1] == 28
+
+
+def test_remove_es():
+    async def wf(inpt):
+        [*chars] = inpt
+        res = ""
+        while chars:
+            c = await future(chars.pop(0))
+            if c == "e":
+                continue
+            res += c
+        return res
+
+    trace = run(wf, "entrepreneur")
+    assert trace[-1] == "ntrprnur"
+
+
+def test_find_squares():
+    # A very stupid to find all the squares in [0...limit]
+
+    # This test exercises loop control flow a fair amount
+    # (nested loops, continue, break...)
+    async def wf(limit):
+        i = 0
+        res = []
+        while i < limit:
+            j = 0
+            while True:
+                j_squared = await future(j * j)
+                if j_squared > i:
+                    break
+                j += 1
+                if j_squared < i:
+                    continue
+                res.append(i)
+            i += 1
+        return res
+
+    trace = run(wf, 20)
+    assert trace[-1] == [0, 1, 4, 9, 16]

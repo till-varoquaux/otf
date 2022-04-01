@@ -2,6 +2,8 @@ __pycache__/
 docs/_build/
 *.py[cod]
 *$py.class
+.\#*
+\#*
 .coverage*
 .tox
 coverage.xml
