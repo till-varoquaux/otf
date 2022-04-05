@@ -21,3 +21,9 @@ Classes
 
 .. autoclass:: Environment
   :members:
+
+.. autoclass:: Suspension
+  :members:
+
+.. autoclass:: Workflow
+  :members:

@@ -1,7 +1,7 @@
 """On-the-fly distributed workflows"""
 from importlib import metadata
 
-from .compiler import Closure, Environment
+from .compiler import Closure, Environment, Suspension, Workflow
 from .decorators import environment, function
 
 # http://epydoc.sourceforge.net/manual-fields.html#module-metadata-variables
@@ -15,6 +15,8 @@ __copyright__ = f"2022, {__author__}"
 __all__ = (
     "Closure",
     "Environment",
+    "Suspension",
+    "Workflow",
     "environment",
     "function",
 )

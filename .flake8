@@ -2,3 +2,4 @@
 extend-ignore = E203
 max-line-length = 80
 docstring-convention = google
+exclude = .git,__pycache__,docs/examples,build,dist,.tox

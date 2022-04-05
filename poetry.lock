@@ -639,6 +639,14 @@ optional = true
 python-versions = ">= 3.5"
 
 [[package]]
+name = "types-docutils"
+version = "0.18.0"
+description = "Typing stubs for docutils"
+category = "dev"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "typing-extensions"
 version = "4.1.1"
 description = "Backported and Experimental Type Hints for Python 3.6+"
@@ -687,7 +695,7 @@ dev-tools = ["grip", "pytest-watch", "sphinx-autobuild"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "519ff655e266fd11a7f7a3d355a735f83205f6f885e827a83b0cf4e26ece653b"
+content-hash = "70e740b8c2f30d0aea771fc1adafe1e7de301478569b81aeb8e3c9bf55e1167b"
 
 [metadata.files]
 alabaster = [
@@ -1063,6 +1071,10 @@ tornado = [
     {file = "tornado-6.1-cp39-cp39-win32.whl", hash = "sha256:d3d20ea5782ba63ed13bc2b8c291a053c8d807a8fa927d941bd718468f7b950c"},
     {file = "tornado-6.1-cp39-cp39-win_amd64.whl", hash = "sha256:548430be2740e327b3fe0201abe471f314741efcb0067ec4f2d7dcfb4825f3e4"},
     {file = "tornado-6.1.tar.gz", hash = "sha256:33c6e81d7bd55b468d2e793517c909b139960b6c790a60b7991b9b6b76fb9791"},
+]
+types-docutils = [
+    {file = "types-docutils-0.18.0.tar.gz", hash = "sha256:14f781eb28d89a1cd61f1c41bd0776ad3bb4e2333d317c37d2c67f2eaf5891fe"},
+    {file = "types_docutils-0.18.0-py3-none-any.whl", hash = "sha256:f0305109169326edffd98c128f542f773be06a1502a17d96359c53e31082db19"},
 ]
 typing-extensions = [
     {file = "typing_extensions-4.1.1-py3-none-any.whl", hash = "sha256:21c85e0fe4b9a155d0799430b0ad741cdce7e359660ccbd8b530613e8df88ce2"},

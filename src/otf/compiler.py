@@ -490,6 +490,10 @@ class CodeBlock:
         return self
 
 
+class InlineCodeBlock(CodeBlock):
+    pass
+
+
 class WorkflowState(CodeBlock):
     """A State in the state machine
 
@@ -678,8 +682,8 @@ class _FsmState:
         self,
         break_state: Optional[WorkflowState],
         continue_state: Optional[WorkflowState],
-    ) -> CodeBlock:
-        return CodeBlock(
+    ) -> InlineCodeBlock:
+        return InlineCodeBlock(
             self.filename,
             break_state=break_state,
             continue_state=continue_state,
@@ -766,18 +770,27 @@ class FsmCompiler(abc.ABC):
                 goto_start = Jump(anchor=node, dest=start)
                 current.seal(goto_start)
                 lc = self.loop_compiler(start=start, stop=stop)
-                body_start = lc.codeblock()
-                body_end = lc.compile_list(body, current=body_start).seal(
-                    goto_start
-                )
-                start.seal(
-                    Conditional(
-                        anchor=node,
-                        test=test,
-                        body=body_start,
-                        orelse=self.codeblock().seal(goto_stop),
-                    )
-                )
+                match test:
+                    # Peephole optimisation for `while True loops`, This is
+                    # mostly useful to keep the example graphs in the
+                    # documentation easy to read.
+                    case ast.Constant(value=True):
+                        start.break_state = start
+                        start.continue_state = stop
+                        lc.compile_list(body, current=start).seal(goto_start)
+                    case _:
+                        body_start = lc.codeblock()
+                        lc.compile_list(body, current=body_start).seal(
+                            goto_start
+                        )
+                        start.seal(
+                            Conditional(
+                                anchor=node,
+                                test=test,
+                                body=body_start,
+                                orelse=self.codeblock().seal(goto_stop),
+                            )
+                        )
                 return stop
             case _:
                 utils.syntax_error(
@@ -830,7 +843,7 @@ class LoopCompiler(FsmCompiler):
             break_state=self.stop, continue_state=self.start
         )
 
-    def codeblock(self) -> CodeBlock:
+    def codeblock(self) -> InlineCodeBlock:
         return self.fsm.mk_codeblock(
             break_state=self.stop, continue_state=self.start
         )
@@ -939,13 +952,20 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
             statements=tuple(body),
         )
 
+    @classmethod
+    def mk(
+        cls, fn: parser.Function[Any, T], environment: Mapping[str, Any]
+    ) -> "WorkflowCompiler":
+        wfc = cls(fn, environment=environment)
+        last = wfc.compile_list(fn.statements, current=wfc.states[0])
+        last.seal(Exit())
+        return wfc
+
 
 def compile_worflow(
     fn: parser.Function[Any, T], environment: Mapping[str, Any]
 ) -> parser.Function[Any, T | "Suspension"]:
-    wfc = WorkflowCompiler(fn, environment=environment)
-    last = wfc.compile_list(fn.statements, current=wfc.states[0])
-    last.seal(Exit())
+    wfc = WorkflowCompiler.mk(fn, environment)
     return wfc.link()
 
 
@@ -999,6 +1019,13 @@ class ExplodedSuspension(TypedDict, total=True):
 
 @dataclasses.dataclass
 class Suspension:
+    """Represents a checkpoint in the execution of a workflow
+
+    A suspension captures the code of a workflow, a position in that code and
+    all the local variables. It's a `continuation
+    <https://en.wikipedia.org/wiki/Continuation>`_ that can be reified.
+    """
+
     position: int
     variables: dict[str, Any]
     awaiting: Any
@@ -1119,5 +1146,11 @@ class Environment(collections.UserDict[str, Any]):
         return bind(fn)
 
     def workflow(self, fn: Callable[P, T]) -> Workflow[P, T]:
+        """Workflow decorator
+
+        Turn a function written with ``async``/``await`` into a workflow.
+        """
+
+        # TODO: talk about :mod:`asyncio`
         parsed = parser.Function[P, T].from_function(fn)
         return Workflow[P, T](environment=self, origin=parsed)

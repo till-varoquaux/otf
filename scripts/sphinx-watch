@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -x
+rm -rf docs/_build/
+exec sphinx-autobuild docs docs/_build --watch src/otf --watch doc --host 0.0.0.0

@@ -31,6 +31,7 @@ black = "*"
 pytest-cov = "*"
 Sphinx = "*"
 sphinx-autodoc-typehints = "*"
+types-docutils = "^0.18.0"
 
 [tool.poetry.extras]
 dev-tools = ["grip", "pytest-watch", "sphinx-autobuild"]
@@ -60,7 +61,7 @@ show_error_codes = true
 strict = true
 warn_unused_ignores = false
 no_incremental = true
-exclude = ["tests/*"]
+exclude = ["tests/*", "docs/examples/*"]
 
 [tool.pytest.ini_options]
 addopts = "--cov --doctest-modules"

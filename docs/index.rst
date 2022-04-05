@@ -6,22 +6,43 @@ OTF: On-the-fly python
   :maxdepth: 1
 
   license
+  deep_dive
 
-The ``OTF`` framework makes it easy to write portable python functions on the
-fly and to send them to remote machine. Here's an example of a portable python
-function that can be used to count words in strings::
+The ``OTF`` framework is a framework to write, run and debug complex machine
+distributed workflows. Unlike the traditional DAG based frameworks (e.g.: `Luigi
+<https://github.com/spotify/luigi>`_, `Airflow <https://airflow.apache.org/>`_,
+`Kubeflow <https://www.kubeflow.org/>`_...) OTF allows you to use normal python
+control flow statements in your workflow (e.g.: ``if`` and ``while``).
 
-  import re
-  import collections
-  
-  @function
-  @environment(re=re, collections=collections)
-  def count_words(document: str) -> collections.Counter[str]:
-      """Count all the words in a string.
-      """
-      words = re.findall("\w+", document)
-      return collections.Counter(words)
 
+Features
+--------
+
+**Define by run control flow**
+
+  Because we rewrite the workflows we can provide ``async/await`` semmantics
+  without requiring a python interpreter to keep on running on a machine while
+  we're awaiting for results.
+
+  See :doc:`workflow_compilation` for an in-depth dive.
+
+**Predictable serialisation**
+
+  The :py:func:`~otf.function` and :py:func:`~otf.environement` decorators make
+  it easy to write code that can be shipped over the network. Serialisation
+  framework cannot always capture the intention of the author of the data/code
+  they are serializing. Whereas `cloudpickle
+  <https://github.com/cloudpipe/cloudpickle>`_ and `dill
+  <https://github.com/uqfoundation/dill>`_ implicitly extend the `pickle
+  <https://docs.python.org/3/library/pickle.html>`_ serialisation mechanism, we
+  require code authors to tell us what will actually get sent.
+
+  .. note:: OTF is still in early alpha. We currently only offer ``pickle``
+    as a serialisation format.
+
+..
+  TODO:
+  **Record-replay debugging**
 
 API Reference
 -------------
