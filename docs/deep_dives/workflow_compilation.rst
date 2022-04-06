@@ -36,6 +36,6 @@ ones used here:
 
 + ``_otf_pos``: target state in the state machine.
 + ``_otf_val``: value that we were just awaiting on.
-+ ``_otf_suspend()``: build a :class:`~otf.Suspension` that captures everything we need to
-  resume the workflow after awaiting on a variable.
++ ``_otf_suspend()``: build a :class:`~otf.Suspension` that captures everything
+  weneed to resume the workflow after awaiting on a variable.
 

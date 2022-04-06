@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "otf"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 description = "A python framework for on-the-fly distributed workflows"
 authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
 license = "CC0-1.0"
@@ -61,7 +61,7 @@ show_error_codes = true
 strict = true
 warn_unused_ignores = false
 no_incremental = true
-exclude = ["tests/*", "docs/examples/*"]
+exclude = ["tests/*", "docs/deep_dives/examples/*"]
 
 [tool.pytest.ini_options]
 addopts = "--cov --doctest-modules"

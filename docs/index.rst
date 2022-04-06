@@ -6,7 +6,7 @@ OTF: On-the-fly python
   :maxdepth: 1
 
   license
-  deep_dive
+  deep_dives
 
 The ``OTF`` framework is a framework to write, run and debug complex machine
 distributed workflows. Unlike the traditional DAG based frameworks (e.g.: `Luigi
@@ -24,7 +24,7 @@ Features
   without requiring a python interpreter to keep on running on a machine while
   we're awaiting for results.
 
-  See :doc:`workflow_compilation` for an in-depth dive.
+  See :doc:`deep_dives/workflow_compilation` for an in-depth dive.
 
 **Predictable serialisation**
 
