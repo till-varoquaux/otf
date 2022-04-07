@@ -27,3 +27,12 @@ Classes
 
 .. autoclass:: Workflow
   :members:
+
+Modules
+-------
+
+.. toctree::
+   :maxdepth: 1
+   :glob:
+
+   modules/*

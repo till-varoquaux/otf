@@ -14,7 +14,7 @@ FunctionType = TypeVar("FunctionType", bound=Callable[..., Any])
 
 
 @typing.overload
-def function(f: FunctionType) -> FunctionType:  # pragma: no cover
+def function(f: FunctionType, /) -> FunctionType:  # pragma: no cover
     ...
 
 
@@ -26,7 +26,7 @@ def function(
 
 
 def function(
-    f: Optional[FunctionType] = None, *, strict: bool = True
+    f: Optional[FunctionType] = None, /, *, strict: bool = True
 ) -> Callable[[Callable[P, T]], Callable[P, T]] | FunctionType:
 
     r"""Wraps the decorated function in its own portable environment.
