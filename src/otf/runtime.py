@@ -27,7 +27,7 @@ class Task(Generic[T]):
 
 
 def task(
-    fn: compiler.Closure[P, T] | compiler._OtfFunWrapper[P, T],
+    fn: compiler.Closure[P, T] | compiler.Function[P, T],
     /,
     *args: P.args,
     **kwargs: P.kwargs,
@@ -38,7 +38,7 @@ def task(
     arguments and the environment it runs in.
 
     """
-    if isinstance(fn, compiler._OtfFunWrapper):
+    if isinstance(fn, compiler.Function):
         closure = compiler.Closure[P, T](
             environment=compiler._OtfEnv.get(), target=fn
         )

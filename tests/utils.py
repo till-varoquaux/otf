@@ -95,3 +95,13 @@ def drill(nodes, path):
 def dump(x, *path):
     nodes = drill(_to_stmts(x), path)
     assert False, explode_ast(nodes)
+
+
+class InstanceOf:
+    """Utility class to check that a given value is an instance of a class."""
+
+    def __init__(self, ty):
+        self.ty = ty
+
+    def __eq__(self, x):
+        return isinstance(x, self.ty)

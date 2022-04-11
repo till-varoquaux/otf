@@ -21,7 +21,7 @@ from typing import (
     TypeVar,
 )
 
-from otf import analyze, parser, utils
+from otf import analyze, pack, parser, utils
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -132,7 +132,7 @@ def _mk_runnable(
     return raw  # type: ignore[no-any-return]
 
 
-class _OtfFunWrapper(Generic[P, T]):
+class Function(Generic[P, T]):
     """A wrapper around a compiled function"""
 
     # This allows us to do things like having a defined "__reduce__" function.
@@ -155,31 +155,37 @@ class _OtfFunWrapper(Generic[P, T]):
             assert self._fun is not None
         return self._fun(*args, **kwargs)
 
-    def __getstate__(self) -> parser.ExplodedFunction:
-        return parser._explode_function(self._origin)
+    @staticmethod
+    def _otf_reconstruct(
+        exploded: parser.ExplodedFunction,
+    ) -> "Function[Any, Any]":
+        return Function(origin=pack.cimplode(parser.Function, exploded))
 
-    def __setstate__(self, origin: parser.ExplodedFunction) -> None:
-        self._origin = parser._implode_function(origin)
-        self._fun = None
+
+@pack.register(pickle=True)
+def _explode_function(
+    value: Function[P, T]
+) -> tuple[Any, parser.ExplodedFunction]:
+    return Function, pack.cexplode(value._origin)
 
 
 class ExplodedClosure(TypedDict, total=True):
     """A serializable representation of a Closure"""
 
-    environment: "Environment"
+    environment: dict[str, Any]
     # TODO: Change to a generic TypeDict when we move to python 3.11
     # https://bugs.python.org/issue44863
-    target: _OtfFunWrapper[Any, Any]
+    target: Function[Any, Any]
 
 
 class Closure(Generic[P, T]):
     """A callable otf function"""
 
     environment: "Environment"
-    target: _OtfFunWrapper[P, T]
+    target: Function[P, T]
 
     def __init__(
-        self, environment: "Environment", target: _OtfFunWrapper[P, T]
+        self, environment: "Environment", target: Function[P, T]
     ) -> None:
         self.environment = environment
         self.target = target
@@ -195,10 +201,13 @@ class Closure(Generic[P, T]):
     def origin(self) -> parser.Function[P, T]:
         return self.target._origin
 
-    def __getstate__(self) -> ExplodedClosure:
-        # We want to get rid of any __wrapped__ etc that might have been added
-        # by functools.update_wrapper
-        return {"environment": self.environment, "target": self.target}
+    @staticmethod
+    def _otf_reconstruct(exploded: ExplodedClosure) -> "Closure[Any, Any]":
+        return Closure(
+            environment=pack.cimplode(Environment, exploded["environment"]),
+            # TODO: cimplode....
+            target=exploded["target"],
+        )
 
     def __str__(self) -> str:
         origin = self.target._origin
@@ -206,6 +215,16 @@ class Closure(Generic[P, T]):
 
     def __repr__(self) -> str:
         return f"<{self!s} at {hex(id(self))}>"
+
+
+@pack.register(pickle=True)
+def _explode_closure(closure: Closure[P, T]) -> tuple[Any, ExplodedClosure]:
+    exploded: ExplodedClosure = {
+        "environment": pack.cexplode(closure.environment),
+        # TODO: pack.cimplode
+        "target": closure.target,
+    }
+    return Closure, exploded
 
 
 class TemplateHole(ast.AST):
@@ -1036,37 +1055,36 @@ class Suspension:
             position=self.position, variables=self.variables, value=value
         )
 
-    def __getstate__(self) -> ExplodedSuspension:
-        return _explode_suspension(self)
+    @staticmethod
+    def _otf_reconstruct(exploded: ExplodedSuspension) -> "Suspension":
+        function = parser._gen_function(
+            name="workflow",
+            body=exploded["code"],
+            signature=inspect.Signature(),
+        )
+        workflow = Workflow[Any, Any](
+            environment=exploded["environment"], origin=function
+        )
+        return Suspension(
+            position=exploded["position"],
+            variables=exploded["variables"],
+            awaiting=exploded["awaiting"],
+            workflow=workflow,
+        )
 
-    def __setstate__(self, state: ExplodedSuspension) -> None:
-        other = _implode_suspension(state)
-        self.__dict__ = other.__dict__
 
-
-def _explode_suspension(suspension: Suspension) -> ExplodedSuspension:
-    return {
+@pack.register(pickle=True)  # type: ignore[arg-type]
+def _explode_suspension(
+    suspension: Suspension,
+) -> tuple[Any, ExplodedSuspension]:
+    exploded: ExplodedSuspension = {
         "environment": suspension.workflow.environment,
         "variables": suspension.variables,
         "awaiting": suspension.awaiting,
         "code": suspension.workflow.origin.body,
         "position": suspension.position,
     }
-
-
-def _implode_suspension(exploded: ExplodedSuspension) -> Suspension:
-    function = parser._gen_function(
-        name="workflow", body=exploded["code"], signature=inspect.Signature()
-    )
-    workflow = Workflow[Any, Any](
-        environment=exploded["environment"], origin=function
-    )
-    return Suspension(
-        position=exploded["position"],
-        variables=exploded["variables"],
-        awaiting=exploded["awaiting"],
-        workflow=workflow,
-    )
+    return Suspension, exploded
 
 
 def _otf_suspend(
@@ -1133,7 +1151,7 @@ class Environment(collections.UserDict[str, Any]):
 
         def bind(fn: Callable[P, T]) -> Closure[P, T]:
             parsed = parser.Function[P, T].from_function(fn)
-            wrapped = _OtfFunWrapper[P, T](origin=parsed)
+            wrapped = Function[P, T](origin=parsed)
             if not lazy:
                 wrapped._compile(self)
             self.data[parsed.name] = wrapped
@@ -1154,3 +1172,16 @@ class Environment(collections.UserDict[str, Any]):
         # TODO: talk about :mod:`asyncio`
         parsed = parser.Function[P, T].from_function(fn)
         return Workflow[P, T](environment=self, origin=parsed)
+
+    @staticmethod
+    def _otf_reconstruct(exploded: dict[str, Any]) -> "Environment":
+        return Environment(**exploded)
+
+
+@pack.register(pickle=True)
+def _explode_environment(
+    environment: Environment,
+) -> tuple[Any, dict[str, Any]]:
+    builtins = _get_builtins()
+    res = {k: v for k, v in environment.data.items() if k not in builtins}
+    return Environment, res

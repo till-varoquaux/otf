@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from otf import compiler, parser
+from otf import compiler, pack, parser
 
 from . import utils
 
@@ -135,7 +135,7 @@ def test_lazy_env():
     assert incr() == 2
 
 
-def test_pickle():
+def test_pickle_and_copy():
     def f(x, y):
         return x + y
 
@@ -151,12 +151,41 @@ def test_pickle():
         return i
 
     copy_incr = pickle.loads(pickle.dumps(incr))
+
     assert incr() == 1
 
     # We now have a copy of the closure incr(). I.e.: it has its own environment
-    copy_incr = pickle.loads(pickle.dumps(incr))
+    assert incr.environment["i"] == 1
+    assert copy_incr.environment["i"] == 0
+
+    assert copy_incr() == 1
+
+    copy_incr2 = pack.copy(incr)
     assert incr() == 2
-    assert copy_incr() == 2
+    assert copy_incr2() == 2
+
+
+def test_explode_function():
+    @compiler.Environment().function
+    def add(x, y):
+        return x + y
+
+    assert pack.explode(add) == pack.Custom(
+        "otf.compiler.Closure",
+        {
+            "environment": {
+                "add": pack.Custom(
+                    "otf.compiler.Function",
+                    value={
+                        "name": "add",
+                        "signature": ["x", "y"],
+                        "body": "        return x + y",
+                    },
+                )
+            },
+            "target": utils.InstanceOf(pack.Reference),
+        },
+    )
 
 
 _NODE = ast.Pass(lineno=0, col_offset=1, end_lineno=0, end_col_offset=1)

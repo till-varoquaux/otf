@@ -35,7 +35,7 @@ def defer(
     fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
 ) -> concurrent.futures.Future[T]:
     "Schedules ``fn(*args, **kwargs)`` to be executed in a separate process."
-    assert isinstance(fn, (compiler._OtfFunWrapper, compiler.Closure))
+    assert isinstance(fn, (compiler.Function, compiler.Closure))
     context = _CurrentContext.get()
     task = runtime.task(fn, *args, **kwargs)
     return context.submit(task.run)

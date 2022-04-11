@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from otf import parser
+from otf import pack, parser
 
 from . import utils
 
@@ -221,7 +221,7 @@ def test_explode_sig(asig, exploded):
 
 def explode(f):
     fn = parser.Function.from_function(f)
-    return parser._explode_function(fn)
+    return pack.explode(fn)
 
 
 def test_explode_function():
@@ -232,13 +232,16 @@ def test_explode_function():
 
     # fmt: on
 
-    exploded = {
-        "body": "        return a + b",
-        "name": "f",
-        "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
-    }
+    exploded = pack.Custom(
+        "otf.parser.Function",
+        {
+            "body": "        return a + b",
+            "name": "f",
+            "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
+        },
+    )
     assert explode(f) == exploded
-    reconstituted = parser._implode_function(exploded)
+    reconstituted = pack.implode(exploded)
     assert pathlib.Path(reconstituted.filename).read_text() == (
         "def f(a, *, b=...):\n" "        return a + b\n"
     )
@@ -251,13 +254,16 @@ def test_explode_function2():
 
     # fmt: on
 
-    exploded = {
-        "body": "                 ...: return a + b",
-        "name": "f",
-        "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
-    }
+    exploded = pack.Custom(
+        "otf.parser.Function",
+        {
+            "body": "                 ...: return a + b",
+            "name": "f",
+            "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
+        },
+    )
     assert explode(f) == exploded
-    reconstituted = parser._implode_function(exploded)
+    reconstituted = pack.implode(exploded)
     assert (
         pathlib.Path(reconstituted.filename).read_text()
         == "def f(a, *, b=...): return a + b\n"

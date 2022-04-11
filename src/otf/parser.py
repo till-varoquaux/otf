@@ -19,6 +19,8 @@ from typing import (
     TypeVar,
 )
 
+from . import pack
+
 #
 # This module contains code adapted from cpython's inspect.py. This code was
 # marked as public domain code.
@@ -370,15 +372,21 @@ class Function(Generic[P, T]):
             signature=_get_signature(fn),
         )
 
-    # Make sure that pickle uses our explode/implode code.
-    def __getstate__(self) -> ExplodedFunction:
-        return _explode_function(self)
+    @staticmethod
+    def _otf_reconstruct(exploded: ExplodedFunction) -> "Function[Any, Any]":
+        signature = _implode_signature(exploded["signature"])
+        return _gen_function(
+            name=exploded["name"], body=exploded["body"], signature=signature
+        )
 
-    def __setstate__(self, exploded: "ExplodedFunction") -> None:
-        other = _implode_function(exploded)
-        # Getting around "Frozen"... we could use a __reduce__ instead. Either
-        # way, things get a bit messy when pickle is involved.
-        object.__setattr__(self, "__dict__", other.__dict__)
+
+@pack.register(pickle=True)
+def _explode_function(fn: Function[Any, Any]) -> tuple[Any, ExplodedFunction]:
+    return Function, {
+        "name": fn.name,
+        "signature": _explode_signature(fn.signature),
+        "body": fn.body,
+    }
 
 
 class _DotDotDot:
@@ -404,14 +412,6 @@ class _DotDotDot:
 
 
 DOT_DOT_DOT = _DotDotDot()
-
-
-def _explode_function(fn: Function[Any, Any]) -> ExplodedFunction:
-    return {
-        "name": fn.name,
-        "signature": _explode_signature(fn.signature),
-        "body": fn.body,
-    }
 
 
 def _gen_imploded_function_str(
@@ -484,11 +484,4 @@ def _gen_function(
         filename=filename,
         signature=signature,
         statements=tuple(statements),
-    )
-
-
-def _implode_function(exploded: ExplodedFunction) -> Function[Any, Any]:
-    signature = _implode_signature(exploded["signature"])
-    return _gen_function(
-        name=exploded["name"], body=exploded["body"], signature=signature
     )
