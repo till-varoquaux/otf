@@ -171,11 +171,11 @@ def test_explode_function():
         return x + y
 
     assert pack.explode(add) == pack.Custom(
-        "otf.compiler.Closure",
+        "otf.Closure",
         {
             "environment": {
                 "add": pack.Custom(
-                    "otf.compiler.Function",
+                    "otf.Function",
                     value={
                         "name": "add",
                         "signature": ["x", "y"],

@@ -1,8 +1,11 @@
 """On-the-fly distributed workflows"""
 from importlib import metadata
 
+# This import is used to get short names from utils.get_locate_name
+from .compiler import Function  # noqa: F401
 from .compiler import Closure, Environment, Suspension, Workflow
 from .decorators import environment, function
+from .runtime import NamedReference
 
 # http://epydoc.sourceforge.net/manual-fields.html#module-metadata-variables
 
@@ -15,6 +18,7 @@ __copyright__ = f"2022, {__author__}"
 __all__ = (
     "Closure",
     "Environment",
+    "NamedReference",
     "Suspension",
     "Workflow",
     "environment",

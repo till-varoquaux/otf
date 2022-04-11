@@ -27,10 +27,18 @@ def get_locate_name(v: Addressable) -> str:
     if inspect.ismodule(v):
         name = v.__name__
     elif isinstance(v, QualnameAddressable):
+        import otf
+
         if v.__name__ == "<lambda>":
             raise TypeError("lambdas are not supported")
         if v.__module__ == "builtins":
             name = v.__qualname__
+        # Shorten the names of otf's native types and functions if possible
+        elif (
+            v.__module__.startswith("otf.")
+            and otf.__dict__.get(v.__name__, None) == v
+        ):
+            return f"otf.{v.__name__}"
         else:
             name = v.__module__ + "." + v.__qualname__
         if ".<locals>." in v.__qualname__:
