@@ -33,7 +33,9 @@ import functools
 import inspect
 import typing
 import weakref
-from typing import Any, Callable, Optional, Type, TypeVar
+from typing import Any, Callable, Optional, Protocol, Type, TypeVar, Union
+
+from . import utils
 
 __all__ = (
     "explode",
@@ -46,7 +48,39 @@ __all__ = (
 )
 
 T = TypeVar("T")
+Contra = TypeVar("Contra", covariant=True)
 V = TypeVar("V")
+
+CustomImplodeFn = Callable[[Any], T]
+
+
+@typing.runtime_checkable
+class Implodable(Protocol[Contra]):
+    @classmethod
+    def _otf_reconstruct(
+        cls: Type[Contra], _: Any
+    ) -> Contra:  # pragma: no cover
+        ...
+
+
+CustomImploder = Union[CustomImplodeFn[T], Type[Implodable[T]]]
+
+
+def _get_imploder(x: CustomImploder[T]) -> CustomImplodeFn[T]:
+    """Hack to hide reconstruction functions
+
+    This is a hidden feature that allows us to get cleaner ``Custom`` blocks.
+    """
+    if isinstance(x, Implodable):
+        return x._otf_reconstruct
+    return typing.cast(CustomImplodeFn[T], x)
+
+
+@functools.lru_cache()
+def _get_named_imploder(name: str) -> CustomImplodeFn[Any]:
+    obj = typing.cast(CustomImploder[Any], utils.locate(name))
+    return _get_imploder(obj)
+
 
 Reduced = tuple[Callable[[Any], T], Any]
 Reducer = Callable[[T], Reduced[T]]
@@ -138,7 +172,7 @@ def register(
             @functools.wraps(function)
             def reduce(v: T) -> tuple[Callable[[V], T], tuple[V]]:
                 x, y = function(v)
-                return x, (y,)
+                return _get_imploder(x), (y,)
 
             copyreg.pickle(cls, reduce)  # type: ignore[arg-type]
         DISPATCH_TABLE[cls] = function
@@ -173,12 +207,16 @@ class Custom:
     """Denotes a type with a custom de-serialisation function
 
     Args:
-      reduce(function):
-      value: A serialisable value that can be passed as an argument to
+
+      constructor(str): The name of the function used to do the implosion of
+        custom types
+
+      value(Value): A serialisable value that can be passed as an argument to
         ``reduce`` to recreate the original value
+
     """
 
-    constructor: Callable[[Any], Any]
+    constructor: str
     value: "Value"
 
 
@@ -205,6 +243,28 @@ Value = (
 )
 
 MISSING = object()
+
+
+def _get_custom(ty: Type[T]) -> Reducer[T]:
+    """Get the custom serialiser for a given type."""
+    serialiser = DISPATCH_TABLE.get(ty)
+    if serialiser is None:
+        raise TypeError(
+            f"Object of type {ty.__name__} cannot be serialised by OTF"
+        )
+    return serialiser
+
+
+def cexplode(v: Implodable[T]) -> Any:
+    """Private function used to pull apart a custom type"""
+    serialiser = _get_custom(type(v))
+    _fn, res = serialiser(v)
+    return res
+
+
+def cimplode(type: Type[T], v: Any) -> T:
+    """Private function used to rebuild a custom type"""
+    return _get_imploder(type)(v)
 
 
 class Exploder:
@@ -259,13 +319,9 @@ class Exploder:
         elif ty is dict:
             res = self._explode_dict(v)
         else:
-            serialiser = DISPATCH_TABLE.get(ty)
-            if serialiser is None:
-                raise TypeError(
-                    f"Object of type {ty.__name__} cannot be serialised by OTF"
-                )
+            serialiser = _get_custom(ty)
             fn, arg = serialiser(v)
-            res = Custom(fn, self.explode(arg))
+            res = Custom(utils.get_locate_name(fn), self.explode(arg))
         self.memo[addr] = current
         return res
 
@@ -296,7 +352,7 @@ class Imploder:
         elif isinstance(exp, Reference):
             res = self.memo[current - exp.offset]
         elif isinstance(exp, Custom):
-            res = exp.constructor(exp.value)
+            res = _get_named_imploder(exp.constructor)(self.implode(exp.value))
         else:
             raise TypeError(
                 f"Object of type {type(exp).__name__} cannot be de-serialised "

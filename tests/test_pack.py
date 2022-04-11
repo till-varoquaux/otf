@@ -90,8 +90,10 @@ def test_reccursive():
 
 def test_tuple():
     v = 1, 2
-    assert pack.explode(v) == pack.Custom(tuple, [1, 2])
-    assert pack.implode(pack.Custom(tuple, [1, 2])) == (1, 2)
+    assert pack.explode(v) == pack.Custom("tuple", [1, 2])
+    assert pack.cexplode(v) == [1, 2]
+    assert pack.cimplode(tuple, [1, 2]) == (1, 2)
+    assert pack.implode(pack.Custom("tuple", [1, 2])) == (1, 2)
 
 
 def test_infer_reducer_type():
@@ -141,3 +143,27 @@ def test_register_pickle():
     # Inheritance doesn't work
     with pytest.raises(Exception, match="Can't pickle"):
         pickle.dumps(ItemGetter2(2))
+
+
+class IdGetter:
+    def __init__(self):
+        self.value = id(self)
+
+    @classmethod
+    def _otf_reconstruct(cls, value: int):
+        v = cls.__new__(cls)
+        v.value = value
+        return v
+
+
+def test_register_random_holder():
+
+    rg = IdGetter()
+
+    @pack.register(pickle=True)
+    def reduce_random_getter(i: IdGetter):
+        return IdGetter, i.value
+
+    reconstructed = pickle.loads(pickle.dumps(rg))
+    reconstructed2 = pack.copy(rg)
+    assert reconstructed.value == reconstructed2.value == rg.value
