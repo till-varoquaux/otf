@@ -31,9 +31,19 @@ import copyreg
 import dataclasses
 import functools
 import inspect
+import types
 import typing
 import weakref
-from typing import Any, Callable, Optional, Protocol, Type, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Optional,
+    Protocol,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from . import utils
 
@@ -52,6 +62,70 @@ Contra = TypeVar("Contra", covariant=True)
 V = TypeVar("V")
 
 CustomImplodeFn = Callable[[Any], T]
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class Reference:
+    """Denotes a shared reference.
+
+    This is a reference to the object that appeared offset nodes ago in a
+    depth first traversal of the tree.
+
+    Parameters:
+      offset(int):
+    """
+
+    offset: int
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class Custom:
+    """Denotes a type with a custom de-serialisation function
+
+    Args:
+
+      constructor(str): The name of the function used to do the implosion of
+        custom types
+
+      value(Value): A serialisable value that can be passed as an argument to
+        ``reduce`` to recreate the original value
+
+    """
+
+    constructor: str
+    value: "Value"
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class Mapping:
+    data: list[tuple["Value", "Value"]]
+
+    def items(self) -> Iterator[tuple["Value", "Value"]]:
+        yield from self.data
+
+
+# Mypy doesn't support recursive types
+# (https://github.com/python/mypy/issues/731)
+
+# We could use Protocol like in:
+# https://github.com/python/typing/issues/182#issuecomment-893657366 but, in
+# practice, this turned out to be a bigger headache than the problem it was
+# trying to solve.
+
+#:
+Value = (
+    int
+    | float
+    | None
+    | str
+    | bytes
+    | bool
+    | Custom
+    | Reference
+    | Mapping
+    | dict[Any, Any]
+    | list[Any]
+)
 
 
 @typing.runtime_checkable
@@ -188,60 +262,6 @@ def _explode_tuple(t: tuple[T, ...]) -> Reduced[tuple[T, ...]]:
     return tuple, list(t)
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Reference:
-    """Denotes a shared reference.
-
-    This is a reference to the object that appeared offset nodes ago in a
-    depth first traversal of the tree.
-
-    Parameters:
-      offset(int):
-    """
-
-    offset: int
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class Custom:
-    """Denotes a type with a custom de-serialisation function
-
-    Args:
-
-      constructor(str): The name of the function used to do the implosion of
-        custom types
-
-      value(Value): A serialisable value that can be passed as an argument to
-        ``reduce`` to recreate the original value
-
-    """
-
-    constructor: str
-    value: "Value"
-
-
-# Mypy doesn't support recursive types
-# (https://github.com/python/mypy/issues/731)
-
-# We could use Protocol like in:
-# https://github.com/python/typing/issues/182#issuecomment-893657366 but, in
-# practice, this turned out to be a bigger headache than the problem it was
-# trying to solve.
-
-#:
-Value = (
-    int
-    | float
-    | None
-    | str
-    | bytes
-    | bool
-    | Custom
-    | Reference
-    | dict[Any, Any]
-    | list[Any]
-)
-
 MISSING = object()
 
 
@@ -279,15 +299,21 @@ class Exploder:
         self.memo = {}
         self.string_hashcon_length = string_hashcon_length
 
-    def _explode_dict(self, d: dict[Any, Any]) -> dict[Value, Value]:
-        rd = {}
+    def _explode_dict(self, d: dict[Any, Any]) -> Value:
+        data = []
+        can_use_dict = True
         for key, value in d.items():
             # Order of evaluation matters so we don't use a dictionary
             # comprehension
             ekey = self.explode(key)
             evalue = self.explode(value)
-            rd[ekey] = evalue
-        return rd
+            can_use_dict &= isinstance(
+                ekey, (int, float, str, bytes, types.NoneType, bool)
+            )
+            data.append((ekey, evalue))
+        if can_use_dict:
+            return dict(data)
+        return Mapping(data)
 
     def explode(self, v: Any) -> Value:
         current = self.cnt
@@ -342,7 +368,7 @@ class Imploder:
             return exp
         elif isinstance(exp, list):
             res = [self.implode(elt) for elt in exp]
-        elif isinstance(exp, dict):
+        elif isinstance(exp, (dict, Mapping)):
             res = {}
             for key, value in exp.items():
                 # Order of evaluation matters so we don't use a dictionary

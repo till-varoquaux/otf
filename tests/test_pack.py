@@ -1,7 +1,9 @@
 import copyreg
 import io
+import math
 import pickle
 import pickletools
+import sys
 
 import pytest
 
@@ -36,6 +38,17 @@ def dis(x):
     raise AssertionError(buf.getvalue())
 
 
+def roundtrip(v):
+    v2 = pack.copy(v)
+    if v != v:
+        assert math.isnan(v)
+        assert math.isnan(v2)
+    else:
+        assert v == v2
+    assert pickle.dumps(v) == pickle.dumps(v2)
+    return v2
+
+
 class A:
     pass
 
@@ -65,9 +78,33 @@ def test_shared():
     v = [1, 2]
     exploded = [[1, 2], pack.Reference(3), pack.Reference(1)]
     assert pack.explode([v, v, v]) == exploded
-    v2 = pack.implode(exploded)
-    assert [v, v, v] == v2
+    v2 = roundtrip([v, v, v])
     assert v2[0] is v2[1] is v2[2]
+
+
+def test_mapping():
+    k1 = (1, 2)
+    k2 = (2, 3)
+    v = {k1: k2, k2: None}
+    roundtrip(v)
+
+
+@pytest.mark.parametrize(
+    "x",
+    (
+        math.nan,
+        math.inf,
+        -math.inf,
+        -0.0,
+        0.0,
+        1 / 3,
+        sys.float_info.min,
+        sys.float_info.max,
+    ),
+)
+def test_weird_floats(x):
+    roundtrip(x)
+    roundtrip({x: x})
 
 
 def test_hash_cons_str():
