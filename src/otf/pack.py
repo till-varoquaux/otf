@@ -27,16 +27,20 @@ API:
 ----
 
 """
+import abc
+import ast
 import copyreg
 import dataclasses
 import functools
 import inspect
+import math
 import types
 import typing
 import weakref
 from typing import (
     Any,
     Callable,
+    Generic,
     Iterator,
     Optional,
     Protocol,
@@ -45,9 +49,10 @@ from typing import (
     Union,
 )
 
-from . import utils
+from . import ast_utils, utils
 
 __all__ = (
+    "dumps",
     "explode",
     "implode",
     "copy",
@@ -287,7 +292,7 @@ def cimplode(type: Type[T], v: Any) -> T:
     return _get_imploder(type)(v)
 
 
-class Exploder:
+class Folder(Generic[T], abc.ABC):
 
     cnt: int
     # id -> position
@@ -299,57 +304,140 @@ class Exploder:
         self.memo = {}
         self.string_hashcon_length = string_hashcon_length
 
-    def _explode_dict(self, d: dict[Any, Any]) -> Value:
-        data = []
-        can_use_dict = True
-        for key, value in d.items():
-            # Order of evaluation matters so we don't use a dictionary
-            # comprehension
-            ekey = self.explode(key)
-            evalue = self.explode(value)
-            can_use_dict &= isinstance(
-                ekey, (int, float, str, bytes, types.NoneType, bool)
-            )
-            data.append((ekey, evalue))
-        if can_use_dict:
-            return dict(data)
-        return Mapping(data)
+    @abc.abstractmethod
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> T:  # pragma: no cover
+        ...
 
-    def explode(self, v: Any) -> Value:
+    @abc.abstractmethod
+    def mapping(self, items: list[tuple[T, T]]) -> T:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def sequence(self, items: list[T]) -> T:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def reference(self, offset: int) -> T:  # pragma: no cover
+        ...
+
+    @abc.abstractmethod
+    def custom(self, constructor: str, value: T) -> T:  # pragma: no cover
+        ...
+
+    def fold(self, v: Any) -> T:
         current = self.cnt
         self.cnt += 1
         ty = type(v)
         # We do exact type comparisons instead of calls to `isinstance` to
         # avoid running into problems with inheritance
-        if ty in (int, float, type(None), bool):
-            return v  # type: ignore[no-any-return]
+        if ty in (int, float, types.NoneType, bool):
+            return self.constant(v)
         if ty in (bytes, str):
             if len(v) >= self.string_hashcon_length:
                 addr = -abs(hash(v))
                 memoized = self.memo.get(addr, MISSING)
                 self.memo[addr] = current
                 if isinstance(memoized, int):
-                    return Reference(current - memoized)
-            return v  # type: ignore[no-any-return]
+                    return self.reference(current - memoized)
+            return self.constant(v)
         addr = id(v)
         memoized = self.memo.get(addr, MISSING)
         if isinstance(memoized, int):
             self.memo[addr] = current
-            return Reference(current - memoized)
+            return self.reference(current - memoized)
         if memoized is None:
             raise ValueError("Recursive value found")
         self.memo[addr] = None
-        res: Value
+        res: T
         if ty is list:
-            res = [self.explode(x) for x in v]
+            res = self.sequence([self.fold(x) for x in v])
         elif ty is dict:
-            res = self._explode_dict(v)
+            data = []
+            for key, value in v.items():
+                # Note that the order is important here for references...
+                ek = self.fold(key)
+                ev = self.fold(value)
+                data.append((ek, ev))
+            res = self.mapping(data)
         else:
             serialiser = _get_custom(ty)
             fn, arg = serialiser(v)
-            res = Custom(utils.get_locate_name(fn), self.explode(arg))
+            res = self.custom(utils.get_locate_name(fn), self.fold(arg))
         self.memo[addr] = current
         return res
+
+
+class Exploder(Folder[Value]):
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> Value:
+        return constant
+
+    def mapping(self, items: list[tuple[Value, Value]]) -> Value:
+        constructor: Callable[[list[tuple[Value, Value]]], Value] = dict
+        for k, _ in items:
+            if not isinstance(
+                k, (int, float, str, bytes, types.NoneType, bool)
+            ):
+                constructor = Mapping
+                break
+        return constructor(items)
+
+    def sequence(self, items: list[Value]) -> Value:
+        return items
+
+    def reference(self, offset: int) -> Value:
+        return Reference(offset)
+
+    def custom(self, constructor: str, value: Value) -> Value:
+        return Custom(constructor, value)
+
+
+class Dumper(Folder[ast.expr]):
+    "Convert a value into an ast fragment"
+
+    @staticmethod
+    def constant(constant: int | float | None | str | bytes | bool) -> ast.expr:
+        if not isinstance(constant, float) or math.isfinite(constant):
+            return ast_utils.constant(constant)
+        if math.isnan(constant):
+            return ast_utils.name("nan")
+        if constant == math.inf:
+            return ast_utils.name("inf")
+        assert constant == -math.inf
+        return ast_utils.neg(ast_utils.name("inf"))
+
+    @staticmethod
+    def mapping(items: list[tuple[ast.expr, ast.expr]]) -> ast.expr:
+        return ast.Dict(
+            keys=[x for x, _ in items],
+            values=[x for _, x in items],
+            lineno=0,
+            col_offset=0,
+            end_lineno=0,
+            end_col_offset=0,
+        )
+
+    @staticmethod
+    def sequence(items: list[ast.expr]) -> ast.expr:
+        return ast.List(
+            elts=items,
+            ctx=ast.Load(),
+            lineno=0,
+            col_offset=0,
+            end_lineno=0,
+            end_col_offset=0,
+        )
+
+    @staticmethod
+    def reference(offset: int) -> ast.expr:
+        return ast_utils.call(ast_utils.name("ref"), ast_utils.constant(offset))
+
+    @staticmethod
+    def custom(constructor: str, value: ast.expr) -> ast.expr:
+        return ast_utils.call(ast_utils.dotted_path(constructor), value)
 
 
 class Imploder:
@@ -364,7 +452,7 @@ class Imploder:
         current = self.cnt
         self.cnt += 1
         res: Any
-        if isinstance(exp, (int, float, type(None), str, bytes, bool)):
+        if isinstance(exp, (int, float, types.NoneType, str, bytes, bool)):
             return exp
         elif isinstance(exp, list):
             res = [self.implode(elt) for elt in exp]
@@ -394,7 +482,7 @@ def explode(v: Any) -> Value:
     Args:
       v:
     """
-    return Exploder().explode(v)
+    return Exploder().fold(v)
 
 
 def implode(v: Value) -> Any:
@@ -404,6 +492,11 @@ def implode(v: Value) -> Any:
       v:
     """
     return Imploder().implode(v)
+
+
+def dumps(v: Any) -> str:
+    "Serialise ``obj`` to python like ``str``."
+    return ast.unparse(Dumper().fold(v))
 
 
 def copy(v: T) -> T:

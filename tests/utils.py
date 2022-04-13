@@ -33,9 +33,12 @@ def explode_ast(node):
     }
 
 
+Primitives = (bytes, str, int, type(None), float)
+
+
 def _check_ast_eq(left, right, path):
     assert type(left) == type(right), f"At {path}"
-    if isinstance(left, (str, int, type(None))):
+    if isinstance(left, Primitives):
         assert left == right, f"At {path}"
     elif isinstance(left, list):
         assert len(left) == len(right), f"At {path}"
@@ -56,7 +59,7 @@ MISSING = ()
 
 
 def _check_fields_attributes(e, path):
-    if isinstance(e, (str, int, type(None))):
+    if isinstance(e, Primitives):
         return
     elif isinstance(e, list):
         for idx, x in enumerate(e):

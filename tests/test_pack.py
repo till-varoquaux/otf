@@ -57,6 +57,20 @@ class MyInt(int):
     pass
 
 
+def test_dumps():
+    assert (
+        pack.dumps((4, -5.0, float("nan"), float("inf"), -float("inf")))
+        == "tuple([4, -5.0, nan, inf, -inf])"
+    )
+    tuples = [(x, x + 1) for x in range(5)]
+    succ = {x: y for x, y in zip(tuples[:-1], tuples[1:])}
+    # assert succ == {}
+    assert pack.dumps(succ) == (
+        "{tuple([0, 1]): tuple([1, 2]), ref(4): tuple([2, 3]), "
+        "ref(4): tuple([3, 4]), ref(4): tuple([4, 5])}"
+    )
+
+
 def test_simple():
     with pytest.raises(TypeError):
         pack.explode(A())

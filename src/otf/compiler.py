@@ -21,7 +21,7 @@ from typing import (
     TypeVar,
 )
 
-from otf import analyze, pack, parser, utils
+from . import analyze, ast_utils, pack, parser, utils
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -328,48 +328,6 @@ class Template:
         return [exp.expand(s) for s in self.statements]
 
 
-# We use "anchors" to generate code: anchor are node whose position we use in
-# the code generation. Their only purpose is to make sure that errors get
-# reported at a sensible location. Sometimes we do not care about positions
-# either because there is no risk of an error being thrown in the generated code
-# or because we do not have a node to tie the generated code too. This is the
-# default anchor we use for these cases.
-ANCHOR = ast.Pass(
-    lineno=0,
-    col_offset=0,
-    end_lineno=0,
-    end_col_offset=0,
-)
-
-
-def int_const(value: int, anchor: ast.AST = ANCHOR) -> ast.expr:
-    """Create a integer constant
-
-    python 3.10 parses negative int constants (e.g.: in ``case -1:...``) as the
-    ``-`` operator applied to a positive int. We want our generated ast to match
-    what would have been produced by the parser.
-
-    """
-    base = ast.Constant(
-        kind=None,
-        value=abs(value),
-        lineno=anchor.lineno,
-        col_offset=anchor.col_offset,
-        end_lineno=anchor.end_lineno,
-        end_col_offset=anchor.col_offset,
-    )
-    if value >= 0:
-        return base
-    return ast.UnaryOp(
-        op=ast.USub(),
-        operand=base,
-        lineno=anchor.lineno,
-        col_offset=anchor.col_offset,
-        end_lineno=anchor.end_lineno,
-        end_col_offset=anchor.col_offset,
-    )
-
-
 # Workflow generation: Async workflows are compiled to state machines where the
 # continuation of every await is in its own state. Those state machines are then
 # translate to a ``match `` statements that dispatches to the right state.
@@ -439,14 +397,16 @@ class LoopCtrlRewriter(ast.NodeTransformer):
         assert self.break_state is not None
         assert self.break_state.idx is not None
         return GotoTemplate(
-            node, dest=int_const(anchor=node, value=self.break_state.idx)
+            node,
+            dest=ast_utils.constant(anchor=node, value=self.break_state.idx),
         )
 
     def visit_Continue(self, node: ast.Continue) -> list[ast.stmt]:
         assert self.continue_state is not None
         assert self.continue_state.idx is not None
         return GotoTemplate(
-            node, dest=int_const(anchor=node, value=self.continue_state.idx)
+            node,
+            dest=ast_utils.constant(anchor=node, value=self.continue_state.idx),
         )
 
 
@@ -541,7 +501,7 @@ class WorkflowState(CodeBlock):
                     col_offset=1,
                     end_lineno=0,
                     end_col_offset=1,
-                    value=int_const(self.idx),
+                    value=ast_utils.constant(self.idx),
                 )
             ),
             body=self.get_body(),
@@ -619,7 +579,8 @@ class Jump(Transition):
 
     def emit(self) -> list[ast.stmt]:
         return GotoTemplate(
-            self.anchor, dest=int_const(anchor=self.anchor, value=self.dest.idx)
+            self.anchor,
+            dest=ast_utils.constant(anchor=self.anchor, value=self.dest.idx),
         )
 
 
@@ -640,7 +601,7 @@ class Suspend(Transition):
     def emit(self) -> list[ast.stmt]:
         return SuspendTemplate(
             self.awaiting,
-            dest=int_const(anchor=self.awaiting, value=self.dest.idx),
+            dest=ast_utils.constant(anchor=self.awaiting, value=self.dest.idx),
             value=self.awaiting,
         )
 
@@ -925,24 +886,10 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
             col_offset=self.src.col_offset,
             end_lineno=self.src.end_lineno,
             end_col_offset=self.src.end_col_offset,
-            subject=ast.Name(
-                id="_otf_pos",
-                ctx=ast.Load(),
-                lineno=self.src.lineno,
-                col_offset=self.src.col_offset,
-                end_lineno=self.src.end_lineno,
-                end_col_offset=self.src.end_col_offset,
-            ),
+            subject=ast_utils.name(id="_otf_pos", anchor=self.src),
             cases=[x.as_case() for x in self.states],
         )
-        true = ast.Constant(
-            kind=None,
-            value=True,
-            lineno=self.src.lineno,
-            col_offset=self.src.col_offset,
-            end_lineno=self.src.end_lineno,
-            end_col_offset=self.src.end_col_offset,
-        )
+        true = ast_utils.constant(value=True, anchor=self.src)
 
         body.append(
             ast.While(
