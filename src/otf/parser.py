@@ -1,13 +1,8 @@
 import ast
-import atexit
-import contextlib
 import dataclasses
-import hashlib
 import inspect
 import linecache
-import os
 import re
-import tempfile
 import typing
 from typing import (
     Any,
@@ -19,7 +14,7 @@ from typing import (
     TypeVar,
 )
 
-from . import pack
+from . import ast_utils, pack
 
 #
 # This module contains code adapted from cpython's inspect.py. This code was
@@ -436,47 +431,13 @@ def _gen_imploded_function_str(
     return f"{header}{body[matchlen:]}\n"
 
 
-# We fill the linecache with the content of the functions to make backtrace work
-# well.
-#
-# Both doctest and ipython patch linecache to handle "fake files":
-# + https://github.com/python/cpython/blob/26fa25a9a73/Lib/doctest.py#L1427
-# + https://github.com/ipython/ipython/blob/b9c1adb1119/IPython/core
-#   /compilerop.py#L189
-#
-# We probably don't want to do the same: this would cause conflicts between our
-# code and theirs.
-
-_SOURCE_DIR: Optional[tempfile.TemporaryDirectory[str]] = None
-
-
-def _cleanup() -> None:
-    global _SOURCE_DIR
-    if _SOURCE_DIR is not None:
-        _SOURCE_DIR.cleanup()
-        _SOURCE_DIR = None
-
-
-def _fill_linecache(data: str) -> str:
-    global _SOURCE_DIR
-    if _SOURCE_DIR is None:
-        _SOURCE_DIR = tempfile.TemporaryDirectory(prefix="otf_py_srcs")
-        atexit.register(_cleanup)
-    digest = hashlib.sha1(data.encode("utf8")).hexdigest()
-    filename = f"{digest}.py"
-    path = os.path.join(_SOURCE_DIR.name, filename)
-    with contextlib.suppress(FileExistsError), open(path, mode="xt") as fp:
-        fp.write(data)
-    return path
-
-
 def _gen_function(
     name: str, body: str, signature: inspect.Signature
 ) -> Function[Any, Any]:
     fun_str = _gen_imploded_function_str(
         name=name, body=body, signature=signature
     )
-    filename = _fill_linecache(fun_str)
+    filename = ast_utils.fill_linecache(fun_str)
     tree = ast.parse(fun_str)
     statements = typing.cast(ast.FunctionDef, tree.body[0]).body
     return Function(

@@ -40,12 +40,14 @@ def dis(x):
 
 def roundtrip(v):
     v2 = pack.copy(v)
+    v3 = pack.loads(pack.dumps(v))
     if v != v:
         assert math.isnan(v)
         assert math.isnan(v2)
+        assert math.isnan(v3)
     else:
-        assert v == v2
-    assert pickle.dumps(v) == pickle.dumps(v2)
+        assert v == v2 == v3
+    assert pickle.dumps(v) == pickle.dumps(v2) == pickle.dumps(v3)
     return v2
 
 
@@ -69,6 +71,46 @@ def test_dumps():
         "{tuple([0, 1]): tuple([1, 2]), ref(4): tuple([2, 3]), "
         "ref(4): tuple([3, 4]), ref(4): tuple([4, 5])}"
     )
+
+
+def double(v):
+    return 2 * v
+
+
+RANGE = """
+# We support comments in serialized data
+[
+  1,
+  2,
+  # Pluses
+  +3,
+  4,
+  # and Trailing commans
+  5,
+]
+"""
+
+
+def test_loads():
+    assert pack.loads("5") == pack.loads("+5") == 5
+    assert pack.loads("-5") == -5
+    assert math.isnan(pack.loads("nan"))
+    assert pack.loads("inf") == pack.loads("+inf") == math.inf
+    assert pack.loads("-inf") == -math.inf
+    assert pack.loads("[None, True]") == [None, True]
+    assert pack.loads("{1: None, 2: True}") == {1: None, 2: True}
+    assert pack.loads("{1: [], 2: ref(2)}") == {1: [], 2: []}
+    assert pack.loads("{1: [], 2: ref(2)}") == {1: [], 2: []}
+
+    assert pack.loads("tests.test_pack.double(5)") == 10
+
+    assert pack.loads(RANGE) == [1, 2, 3, 4, 5]
+
+    with pytest.raises(ValueError):
+        pack.loads("[1, 2, 3, \n5+5\n]")
+
+    with pytest.raises(ValueError):
+        pack.loads("a['a'](5)")
 
 
 def test_simple():

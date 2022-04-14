@@ -53,6 +53,7 @@ from . import ast_utils, utils
 
 __all__ = (
     "dumps",
+    "loads",
     "explode",
     "implode",
     "copy",
@@ -292,7 +293,7 @@ def cimplode(type: Type[T], v: Any) -> T:
     return _get_imploder(type)(v)
 
 
-class Folder(Generic[T], abc.ABC):
+class Serialiser(Generic[T], abc.ABC):
 
     cnt: int
     # id -> position
@@ -326,7 +327,7 @@ class Folder(Generic[T], abc.ABC):
     def custom(self, constructor: str, value: T) -> T:  # pragma: no cover
         ...
 
-    def fold(self, v: Any) -> T:
+    def serialise(self, v: Any) -> T:
         current = self.cnt
         self.cnt += 1
         ty = type(v)
@@ -352,24 +353,24 @@ class Folder(Generic[T], abc.ABC):
         self.memo[addr] = None
         res: T
         if ty is list:
-            res = self.sequence([self.fold(x) for x in v])
+            res = self.sequence([self.serialise(x) for x in v])
         elif ty is dict:
             data = []
             for key, value in v.items():
                 # Note that the order is important here for references...
-                ek = self.fold(key)
-                ev = self.fold(value)
+                ek = self.serialise(key)
+                ev = self.serialise(value)
                 data.append((ek, ev))
             res = self.mapping(data)
         else:
             serialiser = _get_custom(ty)
             fn, arg = serialiser(v)
-            res = self.custom(utils.get_locate_name(fn), self.fold(arg))
+            res = self.custom(utils.get_locate_name(fn), self.serialise(arg))
         self.memo[addr] = current
         return res
 
 
-class Exploder(Folder[Value]):
+class Exploder(Serialiser[Value]):
     def constant(
         self, constant: int | float | None | str | bytes | bool
     ) -> Value:
@@ -395,7 +396,7 @@ class Exploder(Folder[Value]):
         return Custom(constructor, value)
 
 
-class Dumper(Folder[ast.expr]):
+class Stringifier(Serialiser[ast.expr]):
     "Convert a value into an ast fragment"
 
     @staticmethod
@@ -440,40 +441,122 @@ class Dumper(Folder[ast.expr]):
         return ast_utils.call(ast_utils.dotted_path(constructor), value)
 
 
-class Imploder:
-    cnt: int
-    memo: dict[int, Any]
+class Deserialiser(Generic[T]):
+    memo: list[Any]
 
     def __init__(self) -> None:
-        self.cnt = 0
-        self.memo = {}
+        self.memo = []
 
-    def implode(self, exp: Value) -> Any:
-        current = self.cnt
-        self.cnt += 1
-        res: Any
+    def custom(self, constructor: str, value: T) -> Any:
+        return _get_named_imploder(constructor)(self.deserialise(value))
+
+    def reference(self, offset: int) -> Any:
+        return self.memo[len(self.memo) - 1 - offset]
+
+    def sequence(self, items: list[T]) -> Any:
+        return [self.deserialise(elt) for elt in items]
+
+    def mapping(self, items: list[tuple[T, T]]) -> Any:
+        res = {}
+        for key, value in items:
+            # Order of evaluation matters so we don't use a dictionary
+            # comprehension
+            ekey = self.deserialise(key)
+            res[ekey] = self.deserialise(value)
+        return res
+
+    @abc.abstractmethod
+    def visit(self, exp: T) -> Any:  # pragma: no cover
+        ...
+
+    def deserialise(self, exp: T) -> Any:
+        current = len(self.memo)
+        self.memo.append(None)
+        res = self.visit(exp)
+        self.memo[current] = res
+        return res
+
+
+class Imploder(Deserialiser[Value]):
+    def visit(self, exp: Value) -> Any:
         if isinstance(exp, (int, float, types.NoneType, str, bytes, bool)):
             return exp
         elif isinstance(exp, list):
-            res = [self.implode(elt) for elt in exp]
+            return self.sequence(exp)
         elif isinstance(exp, (dict, Mapping)):
-            res = {}
-            for key, value in exp.items():
-                # Order of evaluation matters so we don't use a dictionary
-                # comprehension
-                ekey = self.implode(key)
-                res[ekey] = self.implode(value)
+            return self.mapping(list(exp.items()))
         elif isinstance(exp, Reference):
-            res = self.memo[current - exp.offset]
+            return self.reference(exp.offset)
         elif isinstance(exp, Custom):
-            res = _get_named_imploder(exp.constructor)(self.implode(exp.value))
+            return self.custom(exp.constructor, exp.value)
         else:
             raise TypeError(
                 f"Object of type {type(exp).__name__} cannot be de-serialised "
                 "by OTF"
             )
-        self.memo[current] = res
-        return res
+
+
+class UnStringifier(Deserialiser[ast.expr]):
+    content: str
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+        super().__init__()
+
+    def visit(self, expr: ast.expr) -> Any:
+        # We need a smattering of type: ignore statements because version 0.942
+        # of mypy.
+        #
+        # Resolve in: https://github.com/python/mypy/pull/12321
+        match expr:
+            # Primitives
+            case ast.Constant(value) | ast.UnaryOp(  # type: ignore[misc]
+                ast.UAdd(), ast.Constant(float(value) | int(value))
+            ):
+                return value
+            case ast.UnaryOp(  # type: ignore[misc]
+                ast.USub(),
+                ast.Constant(float(num) | int(num)),  # type: ignore[misc]
+            ):
+                return -num
+            case ast.Name("nan"):  # type: ignore[misc]
+                return math.nan
+            case (
+                ast.Name("inf")  # type: ignore[misc]
+                | ast.UnaryOp(ast.UAdd(), ast.Name("inf"))  # type: ignore[misc]
+            ):
+                return math.inf
+            case ast.UnaryOp(ast.USub(), ast.Name("inf")):  # type: ignore[misc]
+                return -math.inf
+            # /Primitives
+            case ast.List(l):  # type: ignore[misc]
+                return self.sequence(l)
+            case ast.Dict(k, v):  # type: ignore[misc]
+                return self.mapping(list(zip(k, v)))
+            case ast.Call(  # type: ignore[misc]
+                ast.Name("ref"), [ast.Constant(int(offset))]
+            ):
+                return self.reference(offset)
+            case ast.Call(constructor, [arg]):  # type: ignore[misc]
+                path = []
+                while True:
+                    match constructor:
+                        case ast.Name(elt):
+                            path.append(elt)
+                            break
+                        case ast.Attribute(constructor, elt):
+                            path.append(elt)
+                        case _:
+                            self.error(constructor)
+                return self.custom(".".join(reversed(path)), arg)
+        self.error(expr)
+
+    def error(self, node: ast.expr) -> typing.NoReturn:
+        ast_utils.raise_at(
+            ValueError("Malformed node or string"),
+            node=node,
+            content=self.content,
+        )
 
 
 def explode(v: Any) -> Value:
@@ -482,7 +565,7 @@ def explode(v: Any) -> Value:
     Args:
       v:
     """
-    return Exploder().fold(v)
+    return Exploder().serialise(v)
 
 
 def implode(v: Value) -> Any:
@@ -491,12 +574,18 @@ def implode(v: Value) -> Any:
     Args:
       v:
     """
-    return Imploder().implode(v)
+    return Imploder().deserialise(v)
 
 
 def dumps(v: Any) -> str:
     "Serialise ``obj`` to python like ``str``."
-    return ast.unparse(Dumper().fold(v))
+    return ast.unparse(Stringifier().serialise(v))
+
+
+def loads(v: str) -> Any:
+    e = ast.parse(v, mode="eval")
+    assert isinstance(e, ast.Expression), type(e)
+    return UnStringifier(v).deserialise(e.body)
 
 
 def copy(v: T) -> T:

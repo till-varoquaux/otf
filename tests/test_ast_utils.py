@@ -1,4 +1,5 @@
 import ast
+import linecache
 
 import pytest
 
@@ -39,3 +40,14 @@ def test_call():
     exp_args = ast.parse("5 + 5", mode="eval").body
     exp = ast.parse("a.c(5, 5 + 5)", mode="eval").body
     utils.assert_eq_ast(ast_utils.call("a.c", 5, exp_args), exp)
+
+
+def test_fill_linecache():
+    content = "1\n2\n3\n4\n"
+    filename = ast_utils.fill_linecache(content)
+    assert linecache.getline(filename, 1) == "1\n"
+    assert linecache.getline(filename, 3) == "3\n"
+    linecache.checkcache()  # Check that we aren't purged by checkcache
+    assert linecache.getline(filename, 3) == "3\n"
+    # content is hashconsed:
+    assert ast_utils.fill_linecache(content) == filename

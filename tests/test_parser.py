@@ -1,6 +1,6 @@
 import ast
 import inspect
-import pathlib
+import linecache
 import pickle
 import textwrap
 
@@ -9,11 +9,6 @@ import pytest
 from otf import pack, parser
 
 from . import utils
-
-
-@pytest.fixture(autouse=True)
-def f():
-    parser._cleanup()
 
 
 def test_get_body_pb(monkeypatch):
@@ -242,9 +237,10 @@ def test_explode_function():
     )
     assert explode(f) == exploded
     reconstituted = pack.implode(exploded)
-    assert pathlib.Path(reconstituted.filename).read_text() == (
-        "def f(a, *, b=...):\n" "        return a + b\n"
-    )
+    assert linecache.getlines(reconstituted.filename) == [
+        "def f(a, *, b=...):\n",
+        "        return a + b\n",
+    ]
 
 
 def test_explode_function2():
@@ -264,19 +260,9 @@ def test_explode_function2():
     )
     assert explode(f) == exploded
     reconstituted = pack.implode(exploded)
-    assert (
-        pathlib.Path(reconstituted.filename).read_text()
-        == "def f(a, *, b=...): return a + b\n"
-    )
-
-
-def test_double_fill_linecache():
-    a = parser._fill_linecache("a")
-    b = parser._fill_linecache("b")
-    assert pathlib.Path(a).read_text() == "a"
-    assert pathlib.Path(b).read_text() == "b"
-    a2 = parser._fill_linecache("a")
-    assert a == a2
+    assert linecache.getlines(reconstituted.filename) == [
+        "def f(a, *, b=...): return a + b\n"
+    ]
 
 
 def test_pickle():

@@ -1,6 +1,9 @@
 import ast
+import hashlib
+import io
+import linecache
 import math
-import types
+import typing
 from typing import Optional, Protocol
 
 
@@ -64,9 +67,9 @@ def constant(
     value: int | float | None | bool | str | bytes, anchor: Located = ANCHOR
 ) -> ast.expr:
     "Smart constructor for ast.Constant"
-    if isinstance(value, (None | bool | str | bytes | types.NoneType)):
+    if isinstance(value, bool | str | bytes | None):
         return _const(value, anchor=anchor)
-    assert isinstance(value, (int, float))
+    assert isinstance(value, int | float)
     assert math.isfinite(value)
     # Handle -0. and 0. properly
     if math.copysign(1, value) == 1:
@@ -99,6 +102,7 @@ def dotted_path(
     ctx: ast.Load | ast.Store | ast.Del = ast.Load(),
     anchor: Located = ANCHOR,
 ) -> ast.Name | ast.Attribute:
+    """Takes a dotted path and compile it to a python expression"""
     root, *rest = path.split(".")
     res: ast.Name | ast.Attribute = name(root, ctx=ast.Load(), anchor=anchor)
     for x in rest:
@@ -127,6 +131,7 @@ def _arg_to_expr(
 def call(
     func: str | ast.expr, *args: ast.expr, anchor: Located = ANCHOR
 ) -> ast.expr:
+    """Smart constuctor for ast.Call"""
     return ast.Call(
         func=dotted_path(func, anchor=anchor)
         if isinstance(func, str)
@@ -138,3 +143,69 @@ def call(
         end_lineno=anchor.end_lineno,
         end_col_offset=anchor.end_col_offset,
     )
+
+
+# We fill the linecache with the content of the functions to make backtrace work
+# well.
+#
+# Both doctest and ipython patch linecache to handle "fake files":
+# + https://github.com/python/cpython/blob/26fa25a9a73/Lib/doctest.py#L1427
+# + https://github.com/ipython/ipython/blob/b9c1adb1119/IPython/core
+#   /compilerop.py#L189
+#
+# We probably don't want to do the same: this would cause conflicts between our
+# code and theirs.
+# Instead we use a mtime of None, which means our entries won't be purged by
+# linecache.checkcache.
+#
+# If this gets used a lot we'll experience memory leak. We might want to use
+# some handle with a weak references to make sure we clear the cache of entries
+# we do not need
+
+
+def fill_linecache(data: str) -> str:
+    "Fill the linecache with a fake file containing the content of ``data``."
+    digest = hashlib.sha1(data.encode("utf8")).hexdigest()
+    filename = f"<otf-{digest}>"
+    if filename not in linecache.cache:
+        size = len(data)
+        lines = list(io.StringIO(data))
+        # An mtime == None means that this won't be purged by
+        # linecache.checkcache
+        mtime = None
+        # https://github.com/python/typeshed/pull/7623
+        linecache.cache[filename] = (  # type: ignore[assignment]
+            size,
+            mtime,
+            lines,
+            filename,
+        )
+    return filename
+
+
+def raise_at(exc: Exception, node: Located, content: str) -> typing.NoReturn:
+    """Raise an exception for a given location in a string.
+
+    This is a helper function to make sure we get traceback that go up all the
+    way to their real source.
+    """
+    code = compile(
+        ast.Module(
+            body=[
+                ast.Raise(
+                    exc=name("e", anchor=node),
+                    cause=None,
+                    lineno=node.lineno,
+                    col_offset=node.col_offset,
+                    end_lineno=node.end_lineno,
+                    end_col_offset=node.end_col_offset,
+                )
+            ],
+            type_ignores=[],
+        ),
+        filename=fill_linecache(content),
+        mode="exec",
+    )
+    exec(code, {"e": exc})
+    # Mypy fails to infer that this is unreachable
+    assert False  # pragma: no cover
