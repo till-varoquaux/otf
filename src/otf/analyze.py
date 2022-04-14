@@ -8,7 +8,7 @@ import inspect
 import itertools
 import types
 import typing
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping
 
 from otf import parser, utils
 
@@ -19,7 +19,7 @@ __all__ = ("visit_node", "visit_function", "AstInfos")
 class AstInfos:
     """Informations collected from an AST"""
 
-    async_ctrl: Optional[ast.Await] = None
+    async_ctrl: ast.Await | None = None
     bound_vars: Mapping[
         str, ast.Name | inspect.Parameter
     ] = types.MappingProxyType({})

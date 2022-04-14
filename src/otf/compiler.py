@@ -136,7 +136,7 @@ class Function(Generic[P, T]):
     """A wrapper around a compiled function"""
 
     # This allows us to do things like having a defined "__reduce__" function.
-    _fun: Optional[Callable[P, T]]
+    _fun: Callable[P, T] | None
     _origin: parser.Function[P, T]
 
     def __init__(self, origin: parser.Function[P, T]) -> None:
@@ -241,8 +241,8 @@ class _TemplateExpander:
 
     lineno: int
     col_offset: int
-    end_lineno: Optional[int]
-    end_col_offset: Optional[int]
+    end_lineno: int | None
+    end_col_offset: int | None
     subst: dict[str, ast.AST]
 
     @typing.overload
@@ -264,7 +264,7 @@ class _TemplateExpander:
         ...
 
     def expand(self, node: Any) -> Any:
-        if isinstance(node, (int, type(None), str)):
+        if isinstance(node, int | None | str):
             return node
         if isinstance(node, list):
             return [self.expand(x) for x in node]
@@ -418,7 +418,7 @@ class CodeBlock:
 
     filename: str
     statements: list[ast.stmt]
-    out_transition: Optional[Transition]
+    out_transition: Transition | None
     break_state: Optional["WorkflowState"]
     continue_state: Optional["WorkflowState"]
     _sealed: bool
@@ -523,15 +523,15 @@ class PublicState(WorkflowState):
 
     """
 
-    assign: Optional[ast.expr]
+    assign: ast.expr | None
 
     def __init__(
         self,
         filename: str,
         idx: int,
-        break_state: Optional["WorkflowState"],
-        continue_state: Optional["WorkflowState"],
-        assign: Optional[ast.expr],
+        break_state: WorkflowState | None,
+        continue_state: WorkflowState | None,
+        assign: ast.expr | None,
     ) -> None:
         super().__init__(
             filename,
@@ -626,9 +626,9 @@ class _FsmState:
 
     def mk_public_state(
         self,
-        assign: Optional[ast.expr],
-        break_state: Optional[WorkflowState],
-        continue_state: Optional[WorkflowState],
+        assign: ast.expr | None,
+        break_state: WorkflowState | None,
+        continue_state: WorkflowState | None,
     ) -> PublicState:
         idx = self.public_states
         self.public_states += 1
@@ -644,8 +644,8 @@ class _FsmState:
 
     def mk_private_state(
         self,
-        break_state: Optional[WorkflowState],
-        continue_state: Optional[WorkflowState],
+        break_state: WorkflowState | None,
+        continue_state: WorkflowState | None,
     ) -> PrivateState:
         self.private_states += 1
         idx = -self.private_states
@@ -660,8 +660,8 @@ class _FsmState:
 
     def mk_codeblock(
         self,
-        break_state: Optional[WorkflowState],
-        continue_state: Optional[WorkflowState],
+        break_state: WorkflowState | None,
+        continue_state: WorkflowState | None,
     ) -> InlineCodeBlock:
         return InlineCodeBlock(
             self.filename,
@@ -678,7 +678,7 @@ class FsmCompiler(abc.ABC):
 
     @abc.abstractmethod
     def public_state(
-        self, assign: Optional[ast.expr] = None
+        self, assign: ast.expr | None = None
     ) -> PublicState:  # pragma: no cover
         ...
 
@@ -796,7 +796,7 @@ class FsmCompiler(abc.ABC):
             )
 
     def emit_suspend(
-        self, target: Optional[ast.expr], value: ast.expr, origin: CodeBlock
+        self, target: ast.expr | None, value: ast.expr, origin: CodeBlock
     ) -> PublicState:
         dest = self.public_state(assign=target)
         origin.seal(Suspend(awaiting=value, dest=dest))
@@ -813,7 +813,7 @@ class LoopCompiler(FsmCompiler):
     def filename(self) -> str:
         return self.fsm.src.filename
 
-    def public_state(self, assign: Optional[ast.expr] = None) -> PublicState:
+    def public_state(self, assign: ast.expr | None = None) -> PublicState:
         return self.fsm.mk_public_state(
             assign=assign, break_state=self.stop, continue_state=self.start
         )
@@ -847,7 +847,7 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
         )
         self.public_state()
 
-    def public_state(self, assign: Optional[ast.expr] = None) -> PublicState:
+    def public_state(self, assign: ast.expr | None = None) -> PublicState:
         return self.mk_public_state(
             assign=assign, break_state=None, continue_state=None
         )
@@ -1078,7 +1078,7 @@ class Environment(collections.UserDict[str, Any]):
         ...
 
     def function(
-        self, fn: Optional[Callable[P, T]] = None, /, *, lazy: bool = False
+        self, fn: Callable[P, T] | None = None, /, *, lazy: bool = False
     ) -> Closure[P, T] | Callable[[Callable[P, T]], Closure[P, T]]:
         """A decorator to add a function to this environment.
 

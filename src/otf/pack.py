@@ -42,7 +42,6 @@ from typing import (
     Callable,
     Generic,
     Iterator,
-    Optional,
     Protocol,
     Type,
     TypeVar,
@@ -176,7 +175,7 @@ def _infer_reducer_type(f: Reducer[T]) -> Type[T]:
             "The registered function should take only one argument."
         )
     [arg] = values
-    ty: Optional[Type[T]] = arg.annotation
+    ty: Type[T] | None = arg.annotation
     origin = typing.get_origin(ty)
     if origin is not None:
         ty = origin
@@ -191,16 +190,16 @@ def register(function: Reducer[T], /) -> Reducer[T]:  # pragma: no cover
 
 @typing.overload
 def register(
-    *, type: Optional[Type[T]] = None, pickle: bool = False
+    *, type: Type[T] | None = None, pickle: bool = False
 ) -> Callable[[Reducer[T]], Reducer[T]]:  # pragma: no cover
     ...
 
 
 def register(
-    function: Optional[Reducer[T]] = None,
+    function: Reducer[T] | None = None,
     /,
     *,
-    type: Optional[Type[T]] = None,
+    type: Type[T] | None = None,
     pickle: bool = False,
 ) -> Reducer[T] | Callable[[Reducer[T]], Reducer[T]]:
     """Register a function to use while packing object of a given type.
@@ -297,7 +296,7 @@ class Serialiser(Generic[T], abc.ABC):
 
     cnt: int
     # id -> position
-    memo: dict[int, Optional[int]]
+    memo: dict[int, int | None]
     string_hashcon_length: int
 
     def __init__(self, string_hashcon_length: int = 32) -> None:
@@ -379,9 +378,7 @@ class Exploder(Serialiser[Value]):
     def mapping(self, items: list[tuple[Value, Value]]) -> Value:
         constructor: Callable[[list[tuple[Value, Value]]], Value] = dict
         for k, _ in items:
-            if not isinstance(
-                k, (int, float, str, bytes, types.NoneType, bool)
-            ):
+            if not isinstance(k, int | float | str | bytes | bool | None):
                 constructor = Mapping
                 break
         return constructor(items)
@@ -479,11 +476,11 @@ class Deserialiser(Generic[T]):
 
 class Imploder(Deserialiser[Value]):
     def visit(self, exp: Value) -> Any:
-        if isinstance(exp, (int, float, types.NoneType, str, bytes, bool)):
+        if isinstance(exp, int | float | str | bytes | bool | None):
             return exp
         elif isinstance(exp, list):
             return self.sequence(exp)
-        elif isinstance(exp, (dict, Mapping)):
+        elif isinstance(exp, dict | Mapping):
             return self.mapping(list(exp.items()))
         elif isinstance(exp, Reference):
             return self.reference(exp.offset)

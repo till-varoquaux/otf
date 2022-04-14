@@ -4,7 +4,7 @@ import io
 import linecache
 import math
 import typing
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 class Located(Protocol):  # pragma: no cover
@@ -17,11 +17,11 @@ class Located(Protocol):  # pragma: no cover
         ...
 
     @property
-    def end_lineno(self) -> Optional[int]:
+    def end_lineno(self) -> int | None:
         ...
 
     @property
-    def end_col_offset(self) -> Optional[int]:
+    def end_col_offset(self) -> int | None:
         ...
 
 

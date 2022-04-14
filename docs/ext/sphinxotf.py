@@ -26,7 +26,7 @@ class FakeTranslator:
 
 def text_to_fsm(text: str) -> compiler.WorkflowCompiler:
     fn = ast.parse(text).body[0]
-    assert isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+    assert isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
     g: dict[str, Any] = {}
     exec(f"def fn({ast.unparse(fn.args)}): pass", g)
     sig = inspect.signature(g["fn"])

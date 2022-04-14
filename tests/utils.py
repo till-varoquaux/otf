@@ -16,6 +16,9 @@ def unparse(*elts):
     return "\n".join(ast.unparse(stmt) for x in elts for stmt in _to_stmts(x))
 
 
+Primitives = bool | bytes | str | int | float | None
+
+
 def explode_ast(node):
     """Turns ast nodes in a format that can easily be compared and introspected.
 
@@ -23,17 +26,14 @@ def explode_ast(node):
     is not always straightforward.
 
     """
-    if isinstance(node, (str, int, type(None))):
+    if isinstance(node, Primitives):
         return node
-    if isinstance(node, (list, tuple)):
+    if isinstance(node, list | tuple):
         return [explode_ast(v) for v in node]
     assert isinstance(node, ast.AST), node
     return {k: explode_ast(v) for k, v in ast.iter_fields(node)} | {
         "__type__": type(node).__name__
     }
-
-
-Primitives = (bytes, str, int, type(None), float)
 
 
 def _check_ast_eq(left, right, path):

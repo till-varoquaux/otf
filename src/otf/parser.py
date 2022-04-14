@@ -4,15 +4,7 @@ import inspect
 import linecache
 import re
 import typing
-from typing import (
-    Any,
-    Callable,
-    Generic,
-    Optional,
-    ParamSpec,
-    TypedDict,
-    TypeVar,
-)
+from typing import Any, Callable, Generic, ParamSpec, TypedDict, TypeVar
 
 from . import ast_utils, pack
 
@@ -257,7 +249,7 @@ def _implode_signature(
     return inspect.Signature(acc)
 
 
-def _not_none(x: Optional[T]) -> T:
+def _not_none(x: T | None) -> T:
     assert x is not None
     return x
 

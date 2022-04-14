@@ -1,7 +1,7 @@
 import builtins
 import inspect
 import typing
-from typing import Any, Callable, Optional, ParamSpec, TypeVar
+from typing import Any, Callable, ParamSpec, TypeVar
 
 from otf import analyze, compiler, utils
 
@@ -26,7 +26,7 @@ def function(
 
 
 def function(
-    f: Optional[FunctionType] = None, /, *, strict: bool = True
+    f: FunctionType | None = None, /, *, strict: bool = True
 ) -> Callable[[Callable[P, T]], Callable[P, T]] | FunctionType:
 
     r"""Wraps the decorated function in its own portable environment.
@@ -69,7 +69,7 @@ def function(
     """
 
     def wrapper(f: Callable[P, T]) -> Callable[P, T]:
-        env: Optional[compiler.Environment] = getattr(f, "_otf_env", None)
+        env: compiler.Environment | None = getattr(f, "_otf_env", None)
         if env is None:
             env = compiler.Environment()
         wrapped: compiler.Closure[P, T] = env.function(f)
