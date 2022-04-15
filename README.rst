@@ -2,7 +2,7 @@ On-the-fly distributed python workflows
 =======================================
 
 |PyPI| |PyPI - Python Version| |License: CC0-1.0| |Tests| |codecov|
-|Documentation Status|
+|Documentation Status| |binder|
 
 OTF is a framework to programatically write, run and debug workflows.
 
@@ -29,3 +29,5 @@ can install the latest build via:
    :target: https://codecov.io/gh/till-varoquaux/otf
 .. |Documentation Status| image:: https://readthedocs.org/projects/otf/badge/?version=latest
    :target: https://otf.readthedocs.io/en/latest/?badge=latest
+.. |binder| image:: https://mybinder.org/badge_logo.svg
+   :target: https://mybinder.org/v2/gh/till-varoquaux/otf/HEAD

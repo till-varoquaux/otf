@@ -1020,7 +1020,7 @@ class Suspension:
         )
 
 
-@pack.register(pickle=True)  # type: ignore[arg-type]
+@pack.register(pickle=True)
 def _explode_suspension(
     suspension: Suspension,
 ) -> tuple[Any, ExplodedSuspension]:

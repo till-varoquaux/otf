@@ -220,9 +220,7 @@ class AstInfosCollector(ast.NodeVisitor):
     visit_Lambda = functools.partialmethod(  # type: ignore[assignment]
         _invalid_node, "lambda"
     )
-    visit_Match = functools.partialmethod(  # type: ignore[assignment]
-        _invalid_node, "match"
-    )
+    visit_Match = functools.partialmethod(_invalid_node, "match")
     visit_Nonlocal = functools.partialmethod(  # type: ignore[assignment]
         _invalid_node, "nonlocal"
     )

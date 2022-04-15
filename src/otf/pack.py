@@ -514,7 +514,7 @@ class UnStringifier(Deserialiser[ast.expr]):
                 return value
             case ast.UnaryOp(  # type: ignore[misc]
                 ast.USub(),
-                ast.Constant(float(num) | int(num)),  # type: ignore[misc]
+                ast.Constant(float(num) | int(num)),
             ):
                 return -num
             case ast.Name("nan"):  # type: ignore[misc]

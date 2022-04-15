@@ -221,7 +221,7 @@ class MatchCaseCompileDirective(CompileDirective):
             fsm.link()
             .statements[-1]
             .body[0]  # type: ignore[attr-defined]
-            .cases  # type: ignore[attr-defined]
+            .cases
         )
 
         text = ast.unparse(processed)

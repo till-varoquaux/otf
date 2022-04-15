@@ -1,0 +1,8 @@
+# conda env file to work in mybinder
+name: mybinder
+
+dependencies:
+  - pip
+  - python>=3.10
+  - pip:
+    - .

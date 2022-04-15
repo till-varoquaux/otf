@@ -1,5 +1,6 @@
 __pycache__/
 docs/_build/
+docs/_build_doctest/
 *.py[cod]
 *$py.class
 .\#*
