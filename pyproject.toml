@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "otf"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 description = "A python framework for on-the-fly distributed workflows"
 authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
 license = "CC0-1.0"
