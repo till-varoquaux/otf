@@ -18,17 +18,20 @@ __all__ = (
     "task",
 )
 
+# For the docstring
+dumps = pack.dumps
+
 
 class NamedReference(Generic[utils.Addressable]):
-    """A wrapper around a module, class or function that makes it serialisable
+    """Serialisable wrapper around a module, class or function.
 
     :class:`NamedReference` are serialised by copying the name to the wrapped
     object::
 
        >>> import math
        >>> fl = NamedReference(math.floor)
-       >>> pack.explode(fl)
-       Custom(constructor='otf.NamedReference', value='math.floor')
+       >>> dumps(fl)
+       "otf.NamedReference('math.floor')"
 
     If the wrapped object is callable then the wrapped will pass calls
     transparently to the object::
@@ -62,6 +65,16 @@ union
        >>> isinstance(k, ~WrappedComplex)
        True
 
+    Args:
+       v (class|module|function): The object that will be wrapped.
+
+    Raises:
+
+       ValueError: if *obj* cannot be reloaded via its name (e.g.: if *obj* is
+         defined inside a function).
+
+       TypeError: if *obj* is not a module, class or function or if *obj* is a
+         lambda.
     """
 
     __slots__ = ("_value", "_name")
@@ -69,9 +82,9 @@ union
     _name: str
     _value: utils.Addressable
 
-    def __init__(self, v: utils.Addressable) -> None:
-        object.__setattr__(self, "_value", v)
-        object.__setattr__(self, "_name", utils.get_locate_name(v))
+    def __init__(self, obj: utils.Addressable) -> None:
+        object.__setattr__(self, "_value", obj)
+        object.__setattr__(self, "_name", utils.get_locate_name(obj))
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return typing.cast(Callable[..., Any], self._value)(*args, **kwargs)

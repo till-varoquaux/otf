@@ -13,6 +13,7 @@ release = version = otf.__version__
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.doctest",
     "sphinx.ext.graphviz",
     "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",

@@ -5,6 +5,7 @@ from importlib import metadata
 from .compiler import Function  # noqa: F401
 from .compiler import Closure, Environment, Suspension, Workflow
 from .decorators import environment, function
+from .pack import dumps, loads, register
 from .runtime import NamedReference
 
 # http://epydoc.sourceforge.net/manual-fields.html#module-metadata-variables
@@ -23,4 +24,7 @@ __all__ = (
     "Workflow",
     "environment",
     "function",
+    "loads",
+    "dumps",
+    "register",
 )

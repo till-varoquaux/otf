@@ -17,11 +17,12 @@ Supported types:
 
 Out of the box, the types that are supported are:
 
-+ ``str, int, float, bool, None, bytes``: Basic python primitives
-+ ``list``: where all the elements are serialisable
-+ ``dict``: where all the keys and values are serialisable
-+ ``tuple``: where all the elements are serialisable
-+ ``shared references``: but not recursive values
++ :class:`str`, :class:`bytes`, :class:`int`, :class:`float`, :class:`bool`, \
+    ``None``: Basic python primitives
++ :class:`list`: where all the elements are serialisable
++ :class:`dict`: where all the keys and values are serialisable
++ :class:`tuple`: where all the elements are serialisable
++ :class:`shared references`: but not recursive values
 
 API:
 ----
@@ -574,15 +575,19 @@ def implode(v: Value) -> Any:
     return Imploder().deserialise(v)
 
 
-def dumps(v: Any) -> str:
-    "Serialise ``obj`` to python like ``str``."
-    return ast.unparse(Stringifier().serialise(v))
+def dumps(obj: Any) -> str:
+    "Serialise *obj*."
+    return ast.unparse(Stringifier().serialise(obj))
 
 
-def loads(v: str) -> Any:
-    e = ast.parse(v, mode="eval")
+def loads(s: str) -> Any:
+    """
+    Args:
+      s (str):
+    """
+    e = ast.parse(s, mode="eval")
     assert isinstance(e, ast.Expression), type(e)
-    return UnStringifier(v).deserialise(e.body)
+    return UnStringifier(s).deserialise(e.body)
 
 
 def copy(v: T) -> T:

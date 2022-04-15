@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-set -x
+set -ex
 rm -rf docs/_build/
-exec sphinx-autobuild docs docs/_build --watch src/otf --watch doc --host 0.0.0.0
+sphinx-build docs docs/_build -b doctest
+exec sphinx-autobuild docs docs/_build --watch src/otf  -b html --watch doc --host 0.0.0.0

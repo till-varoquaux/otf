@@ -26,7 +26,7 @@ Features
 
   See :doc:`deep_dives/workflow_compilation` for an in-depth dive.
 
-**Predictable serialisation**
+**Explicit serialisation**
 
   The :py:func:`~otf.function` and :py:func:`~otf.environement` decorators make
   it easy to write code that can be shipped over the network. Serialisation
@@ -36,9 +36,6 @@ Features
   <https://github.com/uqfoundation/dill>`_ implicitly extend the `pickle
   <https://docs.python.org/3/library/pickle.html>`_ serialisation mechanism, we
   require code authors to tell us what will actually get sent.
-
-  .. note:: OTF is still in early alpha. We currently only offer ``pickle``
-    as a serialisation format.
 
 ..
   TODO:
