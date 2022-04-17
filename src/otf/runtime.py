@@ -2,6 +2,7 @@
 ``otf.runtime``: Support functions for the runtime
 ==================================================
 """
+from __future__ import annotations
 
 import dataclasses
 import typing
@@ -116,7 +117,7 @@ union
         return self._value
 
     @staticmethod
-    def _otf_reconstruct(name: str) -> "NamedReference[Any]":
+    def _otf_reconstruct(name: str) -> NamedReference[Any]:
         res = NamedReference.__new__(NamedReference)
         object.__setattr__(res, "_name", name)
         object.__setattr__(res, "_value", utils.locate(name))

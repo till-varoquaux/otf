@@ -1,6 +1,7 @@
 """A sphinx plugin that contains custom directives used in otf's documentation.
 
 """
+from __future__ import annotations
 
 import abc
 import ast

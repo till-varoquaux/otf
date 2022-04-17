@@ -1,5 +1,7 @@
 """Analyze python Asts
 """
+from __future__ import annotations
+
 import ast
 import builtins
 import dataclasses
@@ -29,7 +31,7 @@ class AstInfos:
     has_break: bool = False
     has_continue: bool = False
 
-    def __iadd__(self, other: "AstInfos") -> "AstInfos":
+    def __iadd__(self, other: AstInfos) -> AstInfos:
         if self is _EMPTY_INFOS:
             return other
         if other is _EMPTY_INFOS:

@@ -2,4 +2,13 @@
 extend-ignore = E203
 max-line-length = 80
 docstring-convention = google
-exclude = .git,__pycache__,docs/examples,build,dist,.tox
+exclude = .git,__pycache__,build,dist,.tox
+per-file-ignores =
+  per-file-ignores = docs/deep_dives/*.py: OTF1
+
+[flake8:local-plugins]
+extension =
+  OTF = flake8_otf_plugin:CheckLazyAnnot
+
+paths =
+  ./scripts

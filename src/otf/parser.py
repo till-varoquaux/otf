@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 import dataclasses
 import inspect
@@ -325,7 +327,7 @@ class Function(Generic[P, T]):
         return "".join(fn_lines).rstrip()
 
     @classmethod
-    def from_function(cls, fn: Callable[P, T]) -> "Function[P, T]":
+    def from_function(cls, fn: Callable[P, T]) -> Function[P, T]:
         """Construct from an existing python function"""
         # We could use a naive:
         #
@@ -360,7 +362,7 @@ class Function(Generic[P, T]):
         )
 
     @staticmethod
-    def _otf_reconstruct(exploded: ExplodedFunction) -> "Function[Any, Any]":
+    def _otf_reconstruct(exploded: ExplodedFunction) -> Function[Any, Any]:
         signature = _implode_signature(exploded["signature"])
         return _gen_function(
             name=exploded["name"], body=exploded["body"], signature=signature

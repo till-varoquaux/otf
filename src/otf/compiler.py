@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 import ast
 import collections
@@ -15,7 +17,6 @@ from typing import (
     Generic,
     Iterable,
     Mapping,
-    Optional,
     ParamSpec,
     TypedDict,
     TypeVar,
@@ -28,12 +29,12 @@ P = ParamSpec("P")
 
 FunctionType = TypeVar("FunctionType", bound=Callable[..., Any])
 
-_OtfEnv: contextvars.ContextVar["Environment"] = contextvars.ContextVar(
+_OtfEnv: contextvars.ContextVar[Environment] = contextvars.ContextVar(
     "OtfEnvironment"
 )
 
 _OtfWorkflow: contextvars.ContextVar[
-    "Workflow[Any, Any]"
+    Workflow[Any, Any]
 ] = contextvars.ContextVar("OtfWorkflow")
 
 
@@ -143,7 +144,7 @@ class Function(Generic[P, T]):
         self._fun = None
         self._origin = origin
 
-    def _compile(self, env: "Environment") -> None:
+    def _compile(self, env: Environment) -> None:
         # TODO: Figure out what makes mypy unhappy here
         self._fun = _mk_runnable(
             self._origin, env.data  # type: ignore[arg-type]
@@ -158,7 +159,7 @@ class Function(Generic[P, T]):
     @staticmethod
     def _otf_reconstruct(
         exploded: parser.ExplodedFunction,
-    ) -> "Function[Any, Any]":
+    ) -> Function[Any, Any]:
         return Function(origin=pack.cimplode(parser.Function, exploded))
 
 
@@ -181,11 +182,11 @@ class ExplodedClosure(TypedDict, total=True):
 class Closure(Generic[P, T]):
     """A callable otf function"""
 
-    environment: "Environment"
+    environment: Environment
     target: Function[P, T]
 
     def __init__(
-        self, environment: "Environment", target: Function[P, T]
+        self, environment: Environment, target: Function[P, T]
     ) -> None:
         self.environment = environment
         self.target = target
@@ -202,7 +203,7 @@ class Closure(Generic[P, T]):
         return self.target._origin
 
     @staticmethod
-    def _otf_reconstruct(exploded: ExplodedClosure) -> "Closure[Any, Any]":
+    def _otf_reconstruct(exploded: ExplodedClosure) -> Closure[Any, Any]:
         return Closure(
             environment=pack.cimplode(Environment, exploded["environment"]),
             # TODO: cimplode....
@@ -367,8 +368,8 @@ class LoopCtrlRewriter(ast.NodeTransformer):
     "Rewrite all the top level ``continue`` and ``break`` statements to jumps."
 
     filename: str
-    break_state: Optional["WorkflowState"]
-    continue_state: Optional["WorkflowState"]
+    break_state: WorkflowState | None
+    continue_state: WorkflowState | None
 
     def visit_block(self, stmts: list[ast.stmt]) -> list[ast.stmt]:
         res = []
@@ -419,15 +420,15 @@ class CodeBlock:
     filename: str
     statements: list[ast.stmt]
     out_transition: Transition | None
-    break_state: Optional["WorkflowState"]
-    continue_state: Optional["WorkflowState"]
+    break_state: WorkflowState | None
+    continue_state: WorkflowState | None
     _sealed: bool
 
     def __init__(
         self,
         filename: str,
-        break_state: Optional["WorkflowState"],
-        continue_state: Optional["WorkflowState"],
+        break_state: WorkflowState | None,
+        continue_state: WorkflowState | None,
     ) -> None:
         self.statements = []
         self.filename = filename
@@ -486,8 +487,8 @@ class WorkflowState(CodeBlock):
         self,
         filename: str,
         idx: int,
-        break_state: Optional["WorkflowState"],
-        continue_state: Optional["WorkflowState"],
+        break_state: WorkflowState | None,
+        continue_state: WorkflowState | None,
     ) -> None:
         super().__init__(filename, break_state, continue_state)
         self.idx = idx
@@ -693,7 +694,7 @@ class FsmCompiler(abc.ABC):
     @abc.abstractmethod
     def loop_compiler(
         self, start: WorkflowState, stop: WorkflowState
-    ) -> "FsmCompiler":  # pragma: no cover
+    ) -> FsmCompiler:  # pragma: no cover
         ...
 
     def handle(self, node: ast.stmt, current: CodeBlock) -> CodeBlock:
@@ -921,7 +922,7 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
     @classmethod
     def mk(
         cls, fn: parser.Function[Any, T], environment: Mapping[str, Any]
-    ) -> "WorkflowCompiler":
+    ) -> WorkflowCompiler:
         wfc = cls(fn, environment=environment)
         last = wfc.compile_list(fn.statements, current=wfc.states[0])
         last.seal(Exit())
@@ -930,18 +931,18 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
 
 def compile_worflow(
     fn: parser.Function[Any, T], environment: Mapping[str, Any]
-) -> parser.Function[Any, T | "Suspension"]:
+) -> parser.Function[Any, T | Suspension]:
     wfc = WorkflowCompiler.mk(fn, environment)
     return wfc.link()
 
 
 class Workflow(Generic[P, T]):
-    environment: "Environment"
-    _compiled: Callable[[dict[str, Any], int, Any], T | "Suspension"]
+    environment: Environment
+    _compiled: Callable[[dict[str, Any], int, Any], T | Suspension]
     origin: parser.Function[P, T]
 
     def __init__(
-        self, environment: "Environment", origin: parser.Function[P, T]
+        self, environment: Environment, origin: parser.Function[P, T]
     ) -> None:
         self.environment = environment
         self.origin = origin
@@ -952,7 +953,7 @@ class Workflow(Generic[P, T]):
 
     def _resume(
         self, variables: dict[str, Any], position: int, value: Any
-    ) -> T | "Suspension":
+    ) -> T | Suspension:
         env_token = _OtfEnv.set(self.environment)
         workflow_token = _OtfWorkflow.set(self)
         try:
@@ -963,7 +964,7 @@ class Workflow(Generic[P, T]):
             _OtfEnv.reset(env_token)
             _OtfWorkflow.reset(workflow_token)
 
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T | "Suspension":
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T | Suspension:
         ba = self.origin.signature.bind(*args, **kwargs)
         ba.apply_defaults()
         return self._resume(
@@ -976,7 +977,7 @@ class Workflow(Generic[P, T]):
 class ExplodedSuspension(TypedDict, total=True):
     """A serializable representation of a Suspension"""
 
-    environment: "Environment"
+    environment: Environment
     variables: dict[str, Any]
     awaiting: Any
     code: str
@@ -995,7 +996,7 @@ class Suspension:
     position: int
     variables: dict[str, Any]
     awaiting: Any
-    workflow: "Workflow[Any, Any]"
+    workflow: Workflow[Any, Any]
 
     def resume(self, value: Any) -> Any:
         return self.workflow._resume(
@@ -1003,7 +1004,7 @@ class Suspension:
         )
 
     @staticmethod
-    def _otf_reconstruct(exploded: ExplodedSuspension) -> "Suspension":
+    def _otf_reconstruct(exploded: ExplodedSuspension) -> Suspension:
         function = parser._gen_function(
             name="workflow",
             body=exploded["code"],
@@ -1121,7 +1122,7 @@ class Environment(collections.UserDict[str, Any]):
         return Workflow[P, T](environment=self, origin=parsed)
 
     @staticmethod
-    def _otf_reconstruct(exploded: dict[str, Any]) -> "Environment":
+    def _otf_reconstruct(exploded: dict[str, Any]) -> Environment:
         return Environment(**exploded)
 
 

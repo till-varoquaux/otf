@@ -1,4 +1,6 @@
 """On-the-fly distributed workflows"""
+from __future__ import annotations
+
 from importlib import metadata
 
 # This import is used to get short names from utils.get_locate_name

@@ -1,5 +1,11 @@
-"""A toy local scheduler to demonstrate how to use OTF
 """
+``otf.local_scheduler``: Run workflows locally
+==============================================
+
+A toy local scheduler to demonstrate how to use OTF
+"""
+from __future__ import annotations
+
 import concurrent.futures
 import contextlib
 import contextvars

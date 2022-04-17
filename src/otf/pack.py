@@ -28,6 +28,8 @@ API:
 ----
 
 """
+from __future__ import annotations
+
 import abc
 import ast
 import copyreg
@@ -99,14 +101,14 @@ class Custom:
     """
 
     constructor: str
-    value: "Value"
+    value: Value
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Mapping:
-    data: list[tuple["Value", "Value"]]
+    data: list[tuple[Value, Value]]
 
-    def items(self) -> Iterator[tuple["Value", "Value"]]:
+    def items(self) -> Iterator[tuple[Value, Value]]:
         yield from self.data
 
 
