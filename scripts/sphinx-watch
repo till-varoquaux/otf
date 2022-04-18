@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -ex
 rm -rf docs/_build/
-sphinx-build docs docs/_build -b doctest
-exec sphinx-autobuild docs docs/_build --watch src/otf  -b html --watch doc --host 0.0.0.0
+poetry run sphinx-build docs docs/_build -b doctest
+poetry run pip install sphinx-autobuild
+exec poetry run sphinx-autobuild docs docs/_build --watch src/otf  -b html --watch doc --host 0.0.0.0

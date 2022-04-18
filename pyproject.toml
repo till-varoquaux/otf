@@ -19,9 +19,6 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-pytest-watch = {version = "*", optional=true}
-sphinx-autobuild = {version = "*", optional=true}
-grip = {version = "*", optional=true}
 
 [tool.poetry.dev-dependencies]
 mypy = "^0.942"
@@ -32,8 +29,6 @@ pytest-cov = "*"
 Sphinx = "*"
 types-docutils = "^0.18.0"
 
-[tool.poetry.extras]
-dev-tools = ["grip", "pytest-watch", "sphinx-autobuild"]
 
 [tool.black]
 line-length = 80

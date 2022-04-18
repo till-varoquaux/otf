@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -ex
+poetry run pip install pytest-watch
+exec poetry run ptw "$@"
