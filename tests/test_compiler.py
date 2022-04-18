@@ -474,10 +474,14 @@ def run(wf, *args, **kwargs):
     if not isinstance(wf, compiler.Workflow):
         e = compiler.Environment(future=future)
         wf = e.workflow(wf)
-    trace = [wf(*args, **kwargs)]
+    trace = [wf.freeze(*args, **kwargs)]
     while isinstance(trace[-1], compiler.Suspension):
         copied = pickle.loads(pickle.dumps(trace[-1]))
-        trace.append(copied.resume(copied.awaiting.value))
+        if copied.awaiting is None:
+            value = None
+        else:
+            value = copied.awaiting.value
+        trace.append(copied.resume(value))
     return trace
 
 

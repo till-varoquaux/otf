@@ -964,13 +964,15 @@ class Workflow(Generic[P, T]):
             _OtfEnv.reset(env_token)
             _OtfWorkflow.reset(workflow_token)
 
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T | Suspension:
+    def freeze(self, *args: P.args, **kwargs: P.kwargs) -> Suspension:
+        "Create a suspension of this workflow on the first line"
         ba = self.origin.signature.bind(*args, **kwargs)
         ba.apply_defaults()
-        return self._resume(
-            variables=ba.arguments,
+        return Suspension(
             position=0,
-            value=None,
+            variables=ba.arguments,
+            awaiting=None,
+            workflow=self,
         )
 
 
