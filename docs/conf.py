@@ -28,3 +28,5 @@ autodoc_member_order = "bysource"
 intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 
 graphviz_output_format = "svg"
+
+html_theme = "furo"

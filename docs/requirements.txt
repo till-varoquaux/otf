@@ -1,2 +1,2 @@
-sphinx==4.4.0
-sphinx-autodoc-typehints==1.17.0
+sphinx>=4.4.0
+furo>=2022.4.7

@@ -24,10 +24,12 @@ python = "^3.10"
 mypy = "^0.942"
 flake8 = "*"
 isort = "*"
-black = "*"
+black = {extras = ["jupyter"], version = "^22.3.0"}
 pytest-cov = "*"
 Sphinx = "*"
 types-docutils = "^0.18.0"
+jupyter = "^1.0.0"
+furo = "^2022.4.7"
 
 
 [tool.black]
