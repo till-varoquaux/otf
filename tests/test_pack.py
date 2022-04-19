@@ -9,7 +9,9 @@ import sys
 
 import pytest
 
-from otf import pack
+from otf import decorators, pack
+
+from . import utils
 
 LOREM_IPSUM = """
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
@@ -42,7 +44,10 @@ def dis(x):
 
 def roundtrip(v):
     v2 = pack.copy(v)
-    v3 = pack.loads(pack.dumps(v))
+    flat = pack.dumps(v)
+    indented = pack.dumps(v, indent=4)
+    utils.assert_eq_ast(flat, indented)
+    v3 = pack.loads(flat)
     if v != v:
         assert math.isnan(v)
         assert math.isnan(v2)
@@ -61,6 +66,39 @@ class MyInt(int):
     pass
 
 
+@decorators.function
+def ackerman(m, n):
+    if m == 0:
+        return n + 1
+    if n == 0:
+        return ackerman(m - 1, 1)
+    return ackerman(m - 1, ackerman(m, n - 1))
+
+
+PRETTY_ACK = """\
+otf.Closure(
+    {
+        'environment': {
+            'ackerman': otf.Function(
+                {
+                    'name': 'ackerman',
+                    'signature': ['m', 'n'],
+                    'body': (
+                        '    if m == 0:\\n'
+                        '        return n + 1\\n'
+                        '    if n == 0:\\n'
+                        '        return ackerman(m - 1, 1)\\n'
+                        '    return ackerman(m - 1, ackerman(m, n - 1))'
+                    )
+                }
+            )
+        },
+        'target': ref(11)
+    }
+)\
+"""
+
+
 def test_dumps():
     assert (
         pack.dumps((4, -5.0, float("nan"), float("inf"), -float("inf")))
@@ -73,6 +111,7 @@ def test_dumps():
         "{tuple([0, 1]): tuple([1, 2]), ref(4): tuple([2, 3]), "
         "ref(4): tuple([3, 4]), ref(4): tuple([4, 5])}"
     )
+    assert pack.dumps(ackerman, indent=4) == PRETTY_ACK
 
 
 def double(v):

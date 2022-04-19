@@ -1,10 +1,9 @@
-"""
-``otf.pack``: Serialisation library
+"""``otf.pack``: Serialisation library
 ===================================
 
-``Pack`` is a layer that is intended to be used on top of existing serialisation
-libraries. It converts arbitrary python values to a simple intermediate
-representation (:any:`Value`).
+:mod:`~otf.pack` is a layer that is intended to be used on top of existing
+serialisation libraries. It converts arbitrary python values to a simple
+intermediate representation (:any:`Value`).
 
 What differentiate :mod:`~otf.pack` from other serialisation libraries is that
 it is very explicit. Out of the box :mod:`~otf.pack` only handle a small set of
@@ -44,6 +43,7 @@ from typing import (
     Any,
     Callable,
     Generic,
+    Iterable,
     Iterator,
     Protocol,
     Type,
@@ -51,7 +51,7 @@ from typing import (
     Union,
 )
 
-from . import ast_utils, utils
+from . import ast_utils, pretty, utils
 
 __all__ = (
     "dumps",
@@ -96,7 +96,7 @@ class Custom:
         custom types
 
       value(Value): A serialisable value that can be passed as an argument to
-        ``reduce`` to recreate the original value
+        *constructor* to recreate the original value
 
     """
 
@@ -151,7 +151,9 @@ CustomImploder = Union[CustomImplodeFn[T], Type[Implodable[T]]]
 def _get_imploder(x: CustomImploder[T]) -> CustomImplodeFn[T]:
     """Hack to hide reconstruction functions
 
-    This is a hidden feature that allows us to get cleaner ``Custom`` blocks.
+    This is a hidden feature that allows us to get cleaner :class:`Custom`
+    blocks.
+
     """
     if isinstance(x, Implodable):
         return x._otf_reconstruct
@@ -207,12 +209,12 @@ def register(
 ) -> Reducer[T] | Callable[[Reducer[T]], Reducer[T]]:
     """Register a function to use while packing object of a given type.
 
-    ``function`` is expected to take objects of type ``T`` and to return a tuple
+    *function* is expected to take objects of type *T* and to return a tuple
     describing how to recreate the object: a function and serialisable
     value.
 
-    If ``type`` is not specified, :func:`register` uses the type annotation on
-    the first argument to deduce which type register ``function`` for.
+    If *type* is not specified, :func:`register` uses the type annotation on
+    the first argument to deduce which type register *function* for.
 
     If :func:`register` is used as a simple decorator (with no arguments) it
     acts as though the default values for all of it parameters.
@@ -242,7 +244,7 @@ def register(
 
       type: The type we are registering the function for
 
-      pickle: If set to ``True``, ``function`` is registered via
+      pickle: If set to ``True``, *function* is registered via
        :func:`copyreg.pickle` to be used in :mod:`pickle`.
 
     """
@@ -441,6 +443,87 @@ class Stringifier(Serialiser[ast.expr]):
         return ast_utils.call(ast_utils.dotted_path(constructor), value)
 
 
+COL_SEP = pretty.text(",") + pretty.BREAK
+NULL_BREAK = pretty.break_with("")
+
+
+class Prettyfier(Serialiser[pretty.Doc]):
+    "Convert a value into an ast fragment"
+
+    def __init__(self, indent: int, string_hashcon_length: int = 32) -> None:
+        super().__init__(string_hashcon_length=string_hashcon_length)
+        self.indent = indent
+
+    def format_list(
+        self,
+        docs: Iterable[pretty.Doc],
+        *,
+        sep: pretty.Doc = COL_SEP,
+        opar: str,
+        cpar: str,
+    ) -> pretty.Doc:
+        acc = NULL_BREAK
+        first = True
+        for doc in docs:
+            if not first:
+                acc += sep
+            else:
+                first = False
+            acc += doc
+        body = pretty.nest(self.indent, acc) + NULL_BREAK
+        return pretty.group(pretty.text(opar) + body + pretty.text(cpar))
+
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> pretty.Doc:
+        if isinstance(constant, int):
+            return pretty.text(f"{constant:_d}")
+        if (
+            isinstance(constant, str)
+            and len(constant) > 40
+            and "\n" in constant
+        ):
+            return self.format_list(
+                (
+                    pretty.text(repr(line))
+                    for line in constant.splitlines(keepends=True)
+                ),
+                sep=pretty.BREAK,
+                opar="(",
+                cpar=")",
+            )
+        # TODO: long string split
+        if isinstance(constant, float) and not math.isfinite(constant):
+            if math.isnan(constant):
+                return pretty.text("nan")
+            if constant == math.inf:
+                return pretty.text("inf")
+            assert constant == -math.inf
+            return pretty.text("-inf")
+        assert isinstance(constant, float | bytes | str | None | bool)
+        return pretty.text(repr(constant))
+
+    def mapping(self, items: list[tuple[pretty.Doc, pretty.Doc]]) -> pretty.Doc:
+        return self.format_list(
+            (k + pretty.text(": ") + v for k, v in items), opar="{", cpar="}"
+        )
+
+    def sequence(self, items: list[pretty.Doc]) -> pretty.Doc:
+        return self.format_list(items, opar="[", cpar="]")
+
+    @staticmethod
+    def reference(offset: int) -> pretty.Doc:
+        return pretty.text(f"ref({offset:_d})")
+
+    def custom(self, constructor: str, value: pretty.Doc) -> pretty.Doc:
+        return pretty.group(
+            pretty.text(f"{constructor}(")
+            + pretty.nest(self.indent, NULL_BREAK + value)
+            + NULL_BREAK
+            + pretty.text(")")
+        )
+
+
 class Deserialiser(Generic[T]):
     memo: list[Any]
 
@@ -577,9 +660,24 @@ def implode(v: Value) -> Any:
     return Imploder().deserialise(v)
 
 
-def dumps(obj: Any) -> str:
-    "Serialise *obj*."
-    return ast.unparse(Stringifier().serialise(obj))
+def dumps(obj: Any, indent: int | None = None, width: int = 60) -> str:
+    """Serialise *obj*
+
+    If *indent* is not ``None`` the output will be pretty-printed
+
+    Args:
+      obj: The value to serialize
+      indent(int | None): indentation to use for the pretty printing
+      width(int): Maximum line length (when *indent* is specified)
+    """
+    if indent is None:
+        return ast.unparse(Stringifier().serialise(obj))
+    else:
+        assert indent >= 0
+        assert width > indent
+        pr = Prettyfier(indent=indent)
+        doc = pr.serialise(obj)
+        return doc.to_string(width)
 
 
 def loads(s: str) -> Any:
