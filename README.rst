@@ -30,4 +30,4 @@ can install the latest build via:
 .. |Documentation Status| image:: https://readthedocs.org/projects/otf/badge/?version=latest
    :target: https://otf.readthedocs.io/en/latest/?badge=latest
 .. |binder| image:: https://mybinder.org/badge_logo.svg
-   :target: https://mybinder.org/v2/gh/till-varoquaux/otf/HEAD
+   :target: https://mybinder.org/v2/gh/till-varoquaux/otf/HEAD?labpath=docs%2Fexamples%2Fintroduction.ipynb
