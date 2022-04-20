@@ -52,7 +52,7 @@ def test_visit():
         print(foo)
 
     assert visit(f) == analyze.AstInfos(
-        async_ctrl=Instance(ast.Await),
+        awaits=(Instance(ast.Await),),
         bound_vars={
             "foo": ANY_PARAMETER,
             "var": ANY_NAME,

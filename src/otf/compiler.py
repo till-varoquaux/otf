@@ -699,7 +699,7 @@ class FsmCompiler(abc.ABC):
 
     def handle(self, node: ast.stmt, current: CodeBlock) -> CodeBlock:
         infos = analyze.visit_node(node, filename=self.filename)
-        if infos.async_ctrl is None:
+        if infos.awaits == ():
             current.append(node)
             return current
         match node:
@@ -777,7 +777,7 @@ class FsmCompiler(abc.ABC):
                 utils.syntax_error(
                     msg="Await not supported here",
                     filename=self.filename,
-                    node=infos.async_ctrl,
+                    node=infos.awaits[0],
                 )
 
     def compile_list(
@@ -789,11 +789,11 @@ class FsmCompiler(abc.ABC):
 
     def assert_sync(self, node: ast.AST) -> None:
         infos = analyze.visit_node(node, filename=self.filename)
-        if infos.async_ctrl is not None:
+        if infos.awaits != ():
             utils.syntax_error(
                 msg="Await not supported here",
                 filename=self.filename,
-                node=infos.async_ctrl,
+                node=infos.awaits[0],
             )
 
     def emit_suspend(
@@ -940,6 +940,7 @@ class Workflow(Generic[P, T]):
     environment: Environment
     _compiled: Callable[[dict[str, Any], int, Any], T | Suspension]
     origin: parser.Function[P, T]
+    awaits: tuple[ast.Await, ...]
 
     def __init__(
         self, environment: Environment, origin: parser.Function[P, T]
@@ -947,6 +948,8 @@ class Workflow(Generic[P, T]):
         self.environment = environment
         self.origin = origin
         compiled_fn = compile_worflow(origin, environment=environment)
+        infos = analyze.visit_function(origin)
+        self.awaits = infos.awaits
         self._compiled = _mk_runnable(  # type: ignore
             compiled_fn, env=environment.data
         )
@@ -1022,6 +1025,21 @@ class Suspension:
             workflow=workflow,
         )
 
+    @property
+    def code(self) -> str:
+        return self.workflow.origin.body
+
+    @property
+    def lineno(self) -> int | None:
+        """The line we are currently awaiting on (set to None if we haven't entered the
+        body of the function yet).
+
+        """
+        if self.position == 0:
+            return None
+        point = self.workflow.awaits[self.position - 1]
+        return point.lineno - self.workflow.origin.lineno + 1
+
 
 @pack.register(pickle=True)
 def _explode_suspension(
@@ -1031,7 +1049,7 @@ def _explode_suspension(
         "environment": suspension.workflow.environment,
         "variables": suspension.variables,
         "awaiting": suspension.awaiting,
-        "code": suspension.workflow.origin.body,
+        "code": suspension.code,
         "position": suspension.position,
     }
     return Suspension, exploded

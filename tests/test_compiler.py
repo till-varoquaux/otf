@@ -493,7 +493,10 @@ def test_simple_workflow():
         return a + b
 
     trace = run(wf, x=5, y=6)
-    assert trace[-1] == 28
+    assert trace[0].lineno is None
+    assert trace[1].lineno == 2
+    assert trace[2].lineno == 3
+    assert trace[3] == 28
 
 
 def test_remove_es():
@@ -533,4 +536,7 @@ def test_find_squares():
         return res
 
     trace = run(wf, 20)
+
+    assert trace[0].lineno is None
+    assert trace[1].lineno == 6
     assert trace[-1] == [0, 1, 4, 9, 16]

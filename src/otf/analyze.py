@@ -21,7 +21,7 @@ __all__ = ("visit_node", "visit_function", "AstInfos")
 class AstInfos:
     """Informations collected from an AST"""
 
-    async_ctrl: ast.Await | None = None
+    awaits: tuple[ast.Await, ...] = ()
     bound_vars: Mapping[
         str, ast.Name | inspect.Parameter
     ] = types.MappingProxyType({})
@@ -59,7 +59,7 @@ class AstInfos:
             free_vars[k] = fv
 
         return AstInfos(
-            async_ctrl=self.async_ctrl or other.async_ctrl,
+            awaits=self.awaits + other.awaits,
             bound_vars=types.MappingProxyType(bound_vars),
             free_vars=types.MappingProxyType(free_vars),
             exits=False,
@@ -181,7 +181,7 @@ class AstInfosCollector(ast.NodeVisitor):
         return AstInfos(free_vars=types.MappingProxyType({node.id: node}))
 
     def visit_Await(self, node: ast.Await) -> AstInfos:
-        return AstInfos(async_ctrl=node)
+        return AstInfos(awaits=(node,))
 
     def visit_Global(self, node: ast.Global) -> AstInfos:
         # TODO: this needs to always override bound...
