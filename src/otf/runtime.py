@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import typing
-from typing import Any, Callable, Generic, ParamSpec, TypeVar
+from typing import Any, Callable, Generic, ParamSpec, Type, TypedDict, TypeVar
 
 from . import compiler, pack, utils
 
@@ -129,16 +129,45 @@ def _explode_namedref(namedref: NamedReference[Any]) -> tuple[Any, str]:
     return NamedReference, namedref._name
 
 
+class _ExplodedTask(TypedDict, total=True):
+    function: Callable[..., T]
+
+
+class ExplodedTask(_ExplodedTask, total=False):
+    args: list[Any]
+    kwargs: dict[str, Any]
+
+
 @dataclasses.dataclass
 class Task(Generic[T]):
     """A deferred function application"""
 
-    closure: compiler.Closure[Any, T]
+    function: Callable[..., T]
     args: list[Any]
     kwargs: dict[str, Any]
 
     def run(self) -> T:
-        return self.closure(*self.args, **self.kwargs)
+        return self.function(*self.args, **self.kwargs)
+
+    @staticmethod
+    def _otf_reconstruct(exploded: ExplodedTask) -> Task[Any]:
+        return Task(
+            function=exploded["function"],
+            args=exploded.get("args", []),
+            kwargs=exploded.get("kwargs", {}),
+        )
+
+
+@pack.register
+def _explode_task(t: Task[Any]) -> tuple[Type[Task[Any]], ExplodedTask]:
+    res: ExplodedTask = {"function": t.function}
+    if t.args != []:
+        res["args"] = t.args
+
+    if t.kwargs != {}:
+        res["kwargs"] = t.kwargs
+
+    return Task, res
 
 
 def task(
@@ -154,9 +183,11 @@ def task(
 
     """
     if isinstance(fn, compiler.Function):
-        closure = compiler.Closure[P, T](
-            environment=compiler._OtfEnv.get(), target=fn
+        function = compiler.Closure[P, T](
+            # TODO: add an option to trim and copy the environment
+            environment=compiler._OtfEnv.get(),
+            target=fn,
         )
     else:
-        closure = fn
-    return Task(closure=closure, args=[*args], kwargs=dict(**kwargs))
+        function = fn
+    return Task(function=function, args=[*args], kwargs=dict(**kwargs))

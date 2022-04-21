@@ -302,11 +302,15 @@ class Serialiser(Generic[T], abc.ABC):
     cnt: int
     # id -> position
     memo: dict[int, int | None]
+    # Since we rely on `id` to detect duplicates we have to hold on to all the
+    # intermediate values to make sure addresses do not get reused
+    transient: list[Any]
     string_hashcon_length: int
 
     def __init__(self, string_hashcon_length: int = 32) -> None:
         self.cnt = 0
         self.memo = {}
+        self.transient = []
         self.string_hashcon_length = string_hashcon_length
 
     @abc.abstractmethod
@@ -369,6 +373,8 @@ class Serialiser(Generic[T], abc.ABC):
         else:
             serialiser = _get_custom(ty)
             fn, arg = serialiser(v)
+            # Avoid the `id` being reused by other transient values
+            self.transient.append(arg)
             res = self.custom(utils.get_locate_name(fn), self.serialise(arg))
         self.memo[addr] = current
         return res

@@ -13,7 +13,7 @@ import multiprocessing
 import types
 import typing
 import uuid
-from typing import Any, Callable, Generic, ParamSpec, Type, TypeVar
+from typing import Any, Callable, Generic, ParamSpec, Type, TypedDict, TypeVar
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     import ipywidgets  # type: ignore[import]
@@ -30,21 +30,34 @@ _CurrentContext: contextvars.ContextVar[Scheduler] = contextvars.ContextVar(
 )
 
 
+class ExplodedFuture(TypedDict, total=True):
+    uid: str
+    task: runtime.Task[Any]
+
+
 @dataclasses.dataclass
 class Future(Generic[T]):
     "Handle on the result of a deferred computation"
 
     scheduler_id: str
     local_id: int
+    task: runtime.Task[T]
 
     @property
     def uid(self) -> str:
         return f"{self.scheduler_id}:{self.local_id}"
 
     @staticmethod
-    def _otf_reconstruct(uid: str) -> Future[Any]:
-        scheduler_id, local_id = uid.split(":")
-        return Future(scheduler_id, int(local_id))
+    def _otf_reconstruct(exploded: ExplodedFuture) -> Future[Any]:
+        scheduler_id, local_id = exploded["uid"].split(":")
+        return Future(scheduler_id, int(local_id), task=exploded["task"])
+
+
+@pack.register
+def _explode_future(
+    fut: Future[Any],
+) -> tuple[Type[Future[Any]], ExplodedFuture]:
+    return Future, {"uid": fut.uid, "task": fut.task}
 
 
 @dataclasses.dataclass
@@ -137,6 +150,12 @@ class Checkpoint(TracePoint):
             awaiting = ipywidgets.HTML(f"<b>Awaiting:</b>{core}")
             elts.append(awaiting)
 
+        # Printing the locals
+        #
+        # Stack overflow has some interesting discussions on the subject:
+        #
+        # https://stackoverflow.com/questions/37718907/\
+        # variable-explorer-in-jupyter-notebook
         local_rows = []
         for k, v in self.suspension.variables.items():
             value = _ipy_utils.summarize(pack.dumps(v))
@@ -151,11 +170,6 @@ class Checkpoint(TracePoint):
         elts.append(ipywidgets.HTML(local_table))
         vbox = ipywidgets.VBox(elts)
         return vbox
-
-
-@pack.register
-def _explode_future(fut: Future[Any]) -> tuple[Type[Future[Any]], str]:
-    return Future, fut.uid
 
 
 class Scheduler:
@@ -199,7 +213,7 @@ class Scheduler:
         assert self.executor is not None
         conc_fut = self.executor.submit(task.run)
         res: Future[T] = Future(
-            scheduler_id=self.uuid, local_id=len(self.futures)
+            scheduler_id=self.uuid, local_id=len(self.futures), task=task
         )
         self.futures.append(conc_fut)
         return res

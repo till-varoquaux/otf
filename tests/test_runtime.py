@@ -5,6 +5,7 @@ import pickle
 
 import pytest
 
+import otf
 from otf import pack, runtime
 
 
@@ -42,9 +43,26 @@ def test_namedref():
         del Kr.v
 
 
-def test_serialize():
+def test_serialize_namedref():
     mth = runtime.NamedReference(math)
     assert pack.explode(mth) == pack.Custom("otf.NamedReference", "math")
     assert mth.floor(mth.e) == 2
     copied = pickle.loads(pickle.dumps(mth))
     assert copied.floor(copied.e) == 2
+
+
+def test_task():
+    @otf.function
+    def add(x=0, y=0):
+        return x + y
+
+    assert pack.cexplode(runtime.task(add)) == {"function": add}
+    assert pack.cexplode(runtime.task(add, 5, y=6)) == {
+        "function": add,
+        "args": [5],
+        "kwargs": {"y": 6},
+    }
+
+    t2 = pack.copy(runtime.task(add, 5, y=6))
+
+    assert t2.run() == 11
