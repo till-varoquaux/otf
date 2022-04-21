@@ -11,8 +11,12 @@ import contextvars
 import dataclasses
 import multiprocessing
 import types
+import typing
 import uuid
 from typing import Any, Callable, Generic, ParamSpec, Type, TypeVar
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    import ipywidgets  # type: ignore[import]
 
 from . import compiler, pack, runtime
 
@@ -47,6 +51,37 @@ class Future(Generic[T]):
 class TracePoint:
     parent: Checkpoint | None
 
+    # Display as a nice widget in ipython
+    def _ipython_display_(self) -> None:
+        import ipywidgets
+        from IPython import display  # type: ignore
+
+        from otf import _ipy_utils
+
+        trace = []
+        curs: TracePoint | None = self
+        while curs is not None:
+            trace.append(curs)
+            curs = curs.parent
+
+        trace.reverse()
+
+        tab = ipywidgets.Tab(
+            children=[pt._ipy_widget() for pt in trace],
+            # titles = ... doesn't work
+        )
+        for i, pt in enumerate(trace):
+            tab.set_title(i, pt._ipy_title_(i))
+        style = _ipy_utils.get_highlight_style()
+        display.display(display.HTML(f"<style>{style}</style>"))
+        display.display(tab)
+
+    def _ipy_title_(self, index: int) -> str:
+        return f"{index} [{type(self).__name__}]"
+
+    def _ipy_widget(self) -> ipywidgets.Widget:  # pragma: no cover
+        raise NotImplementedError
+
 
 @dataclasses.dataclass
 class Result(TracePoint, Generic[T]):
@@ -60,6 +95,17 @@ class Result(TracePoint, Generic[T]):
     parent: Checkpoint
     value: T
 
+    def _ipy_widget(self) -> ipywidgets.Widget:
+        import ipywidgets
+
+        from . import _ipy_utils
+
+        html = _ipy_utils.highlight(pack.dumps(self.value))
+        return ipywidgets.HTML(html)
+
+    def _ipy_title_(self, index: int) -> str:
+        return "Result"
+
 
 @dataclasses.dataclass
 class Checkpoint(TracePoint):
@@ -70,6 +116,41 @@ class Checkpoint(TracePoint):
     """
 
     suspension: compiler.Suspension
+
+    def _ipy_widget(self) -> ipywidgets.Widget:
+        import ipywidgets
+
+        from . import _ipy_utils
+
+        lineno = self.suspension.lineno
+        code = ipywidgets.HTML(
+            _ipy_utils.highlight(
+                self.suspension.code,
+                hl_lines=() if lineno is None else (lineno,),
+            )
+        )
+        elts = [code]
+        if self.suspension.awaiting is not None:
+            core = _ipy_utils.highlight(
+                pack.dumps(self.suspension.awaiting, indent=4, width=120)
+            )
+            awaiting = ipywidgets.HTML(f"<b>Awaiting:</b>{core}")
+            elts.append(awaiting)
+
+        local_rows = []
+        for k, v in self.suspension.variables.items():
+            value = _ipy_utils.summarize(pack.dumps(v))
+            local_rows.append(f"<tr><td><b>{k}</b></td><td>{value}</td></tr>")
+        tbody = "".join(local_rows)
+        local_table = (
+            "<b>Locals:</b><br>"
+            '<div class="rendered_html jp-RenderedHTMLCommon"><table>'
+            f"{tbody}"
+            "</table></div>"
+        )
+        elts.append(ipywidgets.HTML(local_table))
+        vbox = ipywidgets.VBox(elts)
+        return vbox
 
 
 @pack.register

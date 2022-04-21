@@ -7,7 +7,7 @@ from otf import local_scheduler
 from otf.local_scheduler import defer
 
 
-def test():
+def test(monkeypatch):
     e = otf.Environment(
         math=otf.NamedReference(math),
         defer=otf.NamedReference(local_scheduler.defer),
@@ -51,3 +51,6 @@ def test():
     with local_scheduler.Scheduler() as schd:
         trace = schd.run(check, 1, 2, 3, 4, 5)
     assert trace.value == [False, True, True, False, True]
+
+    monkeypatch.setattr("IPython.display.display", lambda _: None)
+    trace._ipython_display_()
