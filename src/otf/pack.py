@@ -34,12 +34,23 @@ import ast
 import copyreg
 import dataclasses
 import functools
+import heapq
 import inspect
 import math
 import types
 import typing
 import weakref
-from typing import Any, Callable, Generic, Iterable, Iterator, Type, TypeVar
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Generic,
+    Iterable,
+    Iterator,
+    ParamSpec,
+    Type,
+    TypeVar,
+)
 
 from . import ast_utils, pretty, utils
 
@@ -55,8 +66,9 @@ __all__ = (
     "Reference",
 )
 
+P = ParamSpec("P")
 T = TypeVar("T")
-Contra = TypeVar("Contra", covariant=True)
+T_Co = TypeVar("T_Co", covariant=True)
 V = TypeVar("V")
 
 CustomImplodeFn = Callable[[Any], T]
@@ -268,10 +280,10 @@ class Serialiser(Generic[T], abc.ABC):
     string_hashcon_length: int
 
     def __init__(self, string_hashcon_length: int = 32) -> None:
-        self.cnt = 0
+        self.string_hashcon_length = string_hashcon_length
+        self.cnt = -1
         self.memo = {}
         self.transient = []
-        self.string_hashcon_length = string_hashcon_length
 
     @abc.abstractmethod
     def constant(
@@ -279,25 +291,43 @@ class Serialiser(Generic[T], abc.ABC):
     ) -> T:  # pragma: no cover
         ...
 
+    # We want to make sure we pass in iterators because that gives the
+    # `sequence`, `mapping` and `custom` constructors a chance to do something
+    # both before and after the sub-nodes are visited.
     @abc.abstractmethod
-    def mapping(self, items: list[tuple[T, T]]) -> T:  # pragma: no cover
+    def mapping(self, items: Iterator[tuple[T, T]]) -> T:  # pragma: no cover
         ...
 
     @abc.abstractmethod
-    def sequence(self, items: list[T]) -> T:  # pragma: no cover
+    def sequence(self, items: Iterator[T]) -> T:  # pragma: no cover
         ...
 
     @abc.abstractmethod
     def reference(self, offset: int) -> T:  # pragma: no cover
         ...
 
+    # Takes an iterator that yields only one value (the argument to pass to the
+    # constructor)
     @abc.abstractmethod
-    def custom(self, constructor: str, value: T) -> T:  # pragma: no cover
+    def custom(
+        self, constructor: str, value: Iterator[T]
+    ) -> T:  # pragma: no cover
         ...
 
+    def root(self, value: T) -> T:
+        # wrap the root value
+        return value
+
+    def _gen_kv(self, obj: dict[Any, Any]) -> Iterator[tuple[T, T]]:
+        for key, value in obj.items():
+            # Note that the order is important here for references...
+            ek = self.serialise(key)
+            ev = self.serialise(value)
+            yield (ek, ev)
+
     def serialise(self, v: Any) -> T:
-        current = self.cnt
         self.cnt += 1
+        current = self.cnt
         ty = type(v)
         # We do exact type comparisons instead of calls to `isinstance` to
         # avoid running into problems with inheritance
@@ -321,23 +351,22 @@ class Serialiser(Generic[T], abc.ABC):
         self.memo[addr] = None
         res: T
         if ty is list:
-            res = self.sequence([self.serialise(x) for x in v])
+            res = self.sequence(self.serialise(x) for x in v)
         elif ty is dict:
-            data = []
-            for key, value in v.items():
-                # Note that the order is important here for references...
-                ek = self.serialise(key)
-                ev = self.serialise(value)
-                data.append((ek, ev))
-            res = self.mapping(data)
+            res = self.mapping(self._gen_kv(v))
         else:
             serialiser = _get_custom(ty)
             fn, arg = serialiser(v)
-            # Avoid the `id` being reused by other transient values
-            self.transient.append(arg)
-            res = self.custom(utils.get_locate_name(fn), self.serialise(arg))
+            res = self.custom(utils.get_locate_name(fn), self._custom_arg(arg))
         self.memo[addr] = current
+        if current == 0:
+            return self.root(res)
         return res
+
+    def _custom_arg(self, arg: Any) -> Iterator[T]:
+        # Avoid the `id` being reused by other transient values
+        self.transient.append(arg)
+        yield self.serialise(arg)
 
 
 class Exploder(Serialiser[Value]):
@@ -346,29 +375,33 @@ class Exploder(Serialiser[Value]):
     ) -> Value:
         return constant
 
-    def mapping(self, items: list[tuple[Value, Value]]) -> Value:
-        constructor: Callable[[list[tuple[Value, Value]]], Value] = dict
-        for k, _ in items:
+    def mapping(self, items: Iterator[tuple[Value, Value]]) -> Value:
+        acc: dict[Any, Any] = {}
+        for k, v in items:
+            # Do we need to bail out and return a Mapping because the key is
+            # un-hashable?
             if not isinstance(k, int | float | str | bytes | bool | None):
-                constructor = Mapping
-                break
-        return constructor(items)
+                return Mapping([*acc.items(), (k, v), *items])
+            acc[k] = v
+        return acc
 
-    def sequence(self, items: list[Value]) -> Value:
-        return items
+    def sequence(self, items: Iterator[Value]) -> Value:
+        return list(items)
 
     def reference(self, offset: int) -> Value:
         return Reference(offset)
 
-    def custom(self, constructor: str, value: Value) -> Value:
-        return Custom(constructor, value)
+    def custom(self, constructor: str, value: Iterator[Value]) -> Value:
+        (arg,) = value
+        return Custom(constructor, arg)
 
 
 class Stringifier(Serialiser[ast.expr]):
     "Convert a value into an ast fragment"
 
-    @staticmethod
-    def constant(constant: int | float | None | str | bytes | bool) -> ast.expr:
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> ast.expr:
         if not isinstance(constant, float) or math.isfinite(constant):
             return ast_utils.constant(constant)
         if math.isnan(constant):
@@ -378,21 +411,24 @@ class Stringifier(Serialiser[ast.expr]):
         assert constant == -math.inf
         return ast_utils.neg(ast_utils.name("inf"))
 
-    @staticmethod
-    def mapping(items: list[tuple[ast.expr, ast.expr]]) -> ast.expr:
+    def mapping(self, items: Iterator[tuple[ast.expr, ast.expr]]) -> ast.expr:
+        keys = []
+        values = []
+        for k, v in items:
+            keys.append(k)
+            values.append(v)
         return ast.Dict(
-            keys=[x for x, _ in items],
-            values=[x for _, x in items],
+            keys=keys,
+            values=values,
             lineno=0,
             col_offset=0,
             end_lineno=0,
             end_col_offset=0,
         )
 
-    @staticmethod
-    def sequence(items: list[ast.expr]) -> ast.expr:
+    def sequence(self, items: Iterator[ast.expr]) -> ast.expr:
         return ast.List(
-            elts=items,
+            elts=list(items),
             ctx=ast.Load(),
             lineno=0,
             col_offset=0,
@@ -400,13 +436,12 @@ class Stringifier(Serialiser[ast.expr]):
             end_col_offset=0,
         )
 
-    @staticmethod
-    def reference(offset: int) -> ast.expr:
+    def reference(self, offset: int) -> ast.expr:
         return ast_utils.call(ast_utils.name("ref"), ast_utils.constant(offset))
 
-    @staticmethod
-    def custom(constructor: str, value: ast.expr) -> ast.expr:
-        return ast_utils.call(ast_utils.dotted_path(constructor), value)
+    def custom(self, constructor: str, value: Iterator[ast.expr]) -> ast.expr:
+        (arg,) = value
+        return ast_utils.call(ast_utils.dotted_path(constructor), arg)
 
 
 COL_SEP = pretty.text(",") + pretty.BREAK
@@ -415,6 +450,9 @@ NULL_BREAK = pretty.break_with("")
 
 class Prettyfier(Serialiser[pretty.Doc]):
     "Convert a value into an ast fragment"
+
+    NAN: ClassVar[pretty.Doc] = pretty.text("nan")
+    INFINITY: ClassVar[pretty.Doc] = pretty.text("inf")
 
     def __init__(self, indent: int, string_hashcon_length: int = 32) -> None:
         super().__init__(string_hashcon_length=string_hashcon_length)
@@ -436,6 +474,8 @@ class Prettyfier(Serialiser[pretty.Doc]):
             else:
                 first = False
             acc += doc
+        if first:
+            return pretty.text(opar + cpar)
         body = pretty.nest(self.indent, acc) + NULL_BREAK
         return pretty.agrp(pretty.text(opar) + body + pretty.text(cpar))
 
@@ -458,36 +498,189 @@ class Prettyfier(Serialiser[pretty.Doc]):
                 opar="(",
                 cpar=")",
             )
-        # TODO: long string split
         if isinstance(constant, float) and not math.isfinite(constant):
             if math.isnan(constant):
-                return pretty.text("nan")
+                return self.NAN
             if constant == math.inf:
-                return pretty.text("inf")
+                return self.INFINITY
             assert constant == -math.inf
-            return pretty.text("-inf")
+            return pretty.text("-") + self.INFINITY
         assert isinstance(constant, float | bytes | str | None | bool)
         return pretty.text(repr(constant))
 
-    def mapping(self, items: list[tuple[pretty.Doc, pretty.Doc]]) -> pretty.Doc:
+    def mapping(
+        self, items: Iterator[tuple[pretty.Doc, pretty.Doc]]
+    ) -> pretty.Doc:
         return self.format_list(
             (k + pretty.text(": ") + v for k, v in items), opar="{", cpar="}"
         )
 
-    def sequence(self, items: list[pretty.Doc]) -> pretty.Doc:
+    def sequence(self, items: Iterator[pretty.Doc]) -> pretty.Doc:
         return self.format_list(items, opar="[", cpar="]")
 
-    @staticmethod
-    def reference(offset: int) -> pretty.Doc:
+    def reference(self, offset: int) -> pretty.Doc:
         return pretty.text(f"ref({offset:_d})")
 
-    def custom(self, constructor: str, value: pretty.Doc) -> pretty.Doc:
+    def custom(
+        self, constructor: str, value: Iterator[pretty.Doc]
+    ) -> pretty.Doc:
+        (arg,) = value
         return pretty.agrp(
             pretty.text(f"{constructor}(")
-            + pretty.nest(self.indent, NULL_BREAK + value)
+            + pretty.nest(self.indent, NULL_BREAK + arg)
             + NULL_BREAK
             + pretty.text(")")
         )
+
+
+class Boxed(pretty.DocCons):
+    """A mutable node in a document tree."""
+
+    __slots__ = ("priority",)
+    priority: int
+
+    def __init__(self, doc: pretty.Doc, priority: int) -> None:
+        super().__init__(doc, pretty.EMPTY)
+        self.priority = priority
+
+    @property
+    def value(self) -> pretty.Doc:
+        return self.left
+
+    @value.setter
+    def value(self, doc: pretty.Doc) -> None:
+        self.left = doc
+
+
+class Alias(pretty.DocText):
+    __slots__ = ()
+
+
+def _get_import(path: str) -> str | None | Exception:
+    try:
+        while True:
+            obj = utils.locate(path)
+            if obj is None:
+                return ImportError("Failed to find object")
+            if inspect.ismodule(obj):
+                return path
+            if "." not in path:
+                return None
+            if path.startswith(getattr(obj, "__module__", "\000") + "."):
+                return obj.__module__
+            path, _ = path.rsplit(".", 1)
+    except Exception as e:
+        # Clear out all the fields set by `raise ...` that might leak large
+        # amounts of memory
+        e.__cause__ = e.__context__ = e.__traceback__ = None
+        return e
+
+
+class ModulePrinter(Prettyfier):
+
+    INFINITY: ClassVar[pretty.Doc] = pretty.text('float("infinity")')
+    NAN: ClassVar[pretty.Doc] = pretty.text('float("nan")')
+
+    decls: list[tuple[int, pretty.Doc]]
+    targets: dict[int, Boxed | Alias]
+    imports: dict[str, str | Exception | None] | None
+
+    def __init__(
+        self,
+        indent: int,
+        string_hashcon_length: int = 32,
+        add_imports: bool = True,
+    ) -> None:
+        super().__init__(
+            indent=indent, string_hashcon_length=string_hashcon_length
+        )
+        self.targets = {}
+        self.decls = []
+        self.imports = {} if add_imports else None
+
+    def box(
+        self, fn: Callable[P, pretty.Doc], *args: P.args, **kwargs: P.kwargs
+    ) -> pretty.Doc:
+        idx = self.cnt
+        doc = fn(*args, **kwargs)
+        box = self.targets[idx] = Boxed(doc, priority=self.cnt)
+        return box
+
+    def mapping(
+        self, items: Iterator[tuple[pretty.Doc, pretty.Doc]]
+    ) -> pretty.Doc:
+        return self.box(super().mapping, items)
+
+    def sequence(self, items: Iterator[pretty.Doc]) -> pretty.Doc:
+        return self.box(super().sequence, items)
+
+    def reference(self, offset: int) -> pretty.Doc:
+        idx = self.cnt - offset
+        assert idx in self.targets, self.targets
+        orig = self.targets[idx]
+        if isinstance(orig, Alias):
+            self.targets[self.cnt] = orig
+            return orig
+        doc = orig.value
+        alias = self.targets[self.cnt] = self.targets[idx] = orig.value = Alias(
+            f"_{len(self.decls)}"
+        )
+        heapq.heappush(
+            self.decls, (orig.priority, alias + pretty.text(" = ") + doc)
+        )
+        return alias
+
+    def custom(
+        self, constructor: str, value: Iterator[pretty.Doc]
+    ) -> pretty.Doc:
+        if self.imports is not None and constructor not in self.imports:
+            self.imports[constructor] = _get_import(constructor)
+        return self.box(super().custom, constructor, value)
+
+    def root(self, doc: pretty.Doc) -> pretty.Doc:
+        self.targets.clear()
+
+        prelude = pretty.EMPTY
+
+        import_errors: list[tuple[str, Exception]] = []
+        imports = set[str]()
+
+        if self.imports is not None:
+            for k, v in self.imports.items():
+                if v is None:
+                    continue
+                if isinstance(v, Exception):
+                    import_errors.append((k, v))
+                else:
+                    imports.add(v)
+
+            if import_errors:
+                import_errors.sort()
+                prelude += (
+                    pretty.text(
+                        "# There were errors trying to import the following "
+                        "constructors"
+                    )
+                    + NULL_BREAK
+                    + pretty.text("#")
+                    + NULL_BREAK
+                )
+                for k, v in import_errors:
+                    prelude += (
+                        pretty.text(f"# + {k!r}: {type(v).__name__} {v}")
+                        + NULL_BREAK
+                    )
+                prelude += NULL_BREAK
+
+            if imports:
+                for i in sorted(imports):
+                    prelude += pretty.text(f"import {i}") + NULL_BREAK
+                prelude += NULL_BREAK
+
+        while self.decls:
+            _, decl = heapq.heappop(self.decls)
+            prelude += decl + NULL_BREAK + NULL_BREAK
+        return pretty.hgrp(prelude + doc + NULL_BREAK)
 
 
 class Deserialiser(Generic[T]):
@@ -502,10 +695,10 @@ class Deserialiser(Generic[T]):
     def reference(self, offset: int) -> Any:
         return self.memo[len(self.memo) - 1 - offset]
 
-    def sequence(self, items: list[T]) -> Any:
+    def sequence(self, items: Iterable[T]) -> Any:
         return [self.deserialise(elt) for elt in items]
 
-    def mapping(self, items: list[tuple[T, T]]) -> Any:
+    def mapping(self, items: Iterable[tuple[T, T]]) -> Any:
         res = {}
         for key, value in items:
             # Order of evaluation matters so we don't use a dictionary
@@ -553,8 +746,8 @@ class UnStringifier(Deserialiser[ast.expr]):
         super().__init__()
 
     def visit(self, expr: ast.expr) -> Any:
-        # We need a smattering of type: ignore statements because version 0.942
-        # of mypy.
+        # We need a smattering of `type: ignore` statements because version
+        # 0.942 of mypy.
         #
         # Resolve in: https://github.com/python/mypy/pull/12321
         match expr:
@@ -632,7 +825,7 @@ def dumps(obj: Any, indent: int | None = None, width: int = 60) -> str:
     If *indent* is not ``None`` the output will be pretty-printed
 
     Args:
-      obj: The value to serialize
+      obj: The value to serialise
       indent(int | None): indentation to use for the pretty printing
       width(int): Maximum line length (when *indent* is specified)
     """
@@ -644,6 +837,11 @@ def dumps(obj: Any, indent: int | None = None, width: int = 60) -> str:
         pr = Prettyfier(indent=indent)
         doc = pr.serialise(obj)
         return doc.to_string(width)
+
+
+def edit(obj: Any, add_imports: bool = True) -> str:
+    doc = ModulePrinter(indent=4, add_imports=add_imports).serialise(obj)
+    return doc.to_string(80)
 
 
 def loads(s: str) -> Any:

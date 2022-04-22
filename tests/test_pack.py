@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import copyreg
 import io
+import linecache
 import math
 import pickle
 import pickletools
@@ -9,7 +11,7 @@ import sys
 
 import pytest
 
-from otf import decorators, pack
+from otf import ast_utils, decorators, pack
 
 from . import utils
 
@@ -42,19 +44,41 @@ def dis(x):
     raise AssertionError(buf.getvalue())
 
 
+def unedit(s: str):
+    *prelude, last = ast.parse(s).body
+    assert isinstance(last, ast.Expr)
+    env = {}
+    filename = ast_utils.fill_linecache(s)
+    try:
+        before = compile(
+            ast.Module(prelude, type_ignores=[]), filename=filename, mode="exec"
+        )
+        main = compile(
+            ast.Expression(last.value), filename=filename, mode="eval"
+        )
+        exec(before, env)
+        return eval(main, env)
+    except BaseException:
+        raise
+    else:
+        del linecache.cache[filename]
+
+
 def roundtrip(v):
+    indented = pack.dumps(v, indent=4)
+
     v2 = pack.copy(v)
     flat = pack.dumps(v)
-    indented = pack.dumps(v, indent=4)
     utils.assert_eq_ast(flat, indented)
     v3 = pack.loads(flat)
-    if v != v:
-        assert math.isnan(v)
-        assert math.isnan(v2)
-        assert math.isnan(v3)
-    else:
-        assert v == v2 == v3
-    assert pickle.dumps(v) == pickle.dumps(v2) == pickle.dumps(v3)
+    v4 = unedit(pack.edit(v))
+    # nan can wreak havoc in comparisons so we compare pickles...
+    assert (
+        pickle.dumps(v)
+        == pickle.dumps(v2)
+        == pickle.dumps(v3)
+        == pickle.dumps(v4)
+    )
     return v2
 
 
@@ -112,6 +136,84 @@ def test_dumps():
         "ref(4): tuple([3, 4]), ref(4): tuple([4, 5])}"
     )
     assert pack.dumps(ackerman, indent=4) == PRETTY_ACK
+
+
+def test_get_import(monkeypatch):
+    assert pack._get_import("otf.Function") == "otf"
+    assert pack._get_import("otf.compiler.Function") == "otf.compiler"
+
+    assert pack._get_import("math") == "math"
+    assert pack._get_import("float") is None
+    assert pack._get_import("otf.Function") == "otf"
+
+    assert isinstance(pack._get_import("I.DoNot.Exist"), ImportError)
+
+
+def bad_locate(_):
+    raise RuntimeError("locate failed")
+
+
+def test_get_import_pb(monkeypatch):
+
+    monkeypatch.setattr("otf.utils.locate", bad_locate)
+
+    assert isinstance(pack._get_import("what.ever"), RuntimeError)
+
+
+def test_edit():
+    assert pack.edit([]) == "[]\n"
+    assert pack.edit((math.nan, math.inf, -math.inf)) == (
+        'tuple([float("nan"), float("infinity"), -float("infinity")])\n'
+    )
+    x = {}
+    v = (x, x)
+    assert (
+        pack.edit([v, v, v, v])
+        == "_0 = {}\n\n_1 = tuple([_0, _0])\n\n[_1, _1, _1, _1]\n"
+    )
+
+
+BAD_IMPORT_EXPECTED = """\
+# There were errors trying to import the following constructors
+#
+# + 'tuple': RuntimeError locate failed
+
+tuple([1, 2, 3])
+"""
+
+
+def test_edit_bad_import(monkeypatch):
+    def bad_get_import(s):
+        return RuntimeError("locate failed")
+
+    monkeypatch.setattr(pack, "_get_import", bad_get_import)
+    assert pack.edit((1, 2, 3)) == BAD_IMPORT_EXPECTED
+
+    assert pack.edit((1, 2, 3), add_imports=False) == ("tuple([1, 2, 3])\n")
+
+
+EDITABLE_ACKERMAN = r"""import otf
+
+_0 = otf.Function(
+    {
+        'name': 'ackerman',
+        'signature': ['m', 'n'],
+        'body': (
+            '    if m == 0:\n'
+            '        return n + 1\n'
+            '    if n == 0:\n'
+            '        return ackerman(m - 1, 1)\n'
+            '    return ackerman(m - 1, ackerman(m, n - 1))'
+        )
+    }
+)
+
+otf.closure({'environment': {'ackerman': _0}, 'target': _0})
+"""
+
+
+def test_edit_acckerman():
+    assert pack.edit(ackerman) == EDITABLE_ACKERMAN
 
 
 def double(v):
