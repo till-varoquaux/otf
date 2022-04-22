@@ -477,7 +477,7 @@ class Prettyfier(Serialiser[pretty.Doc]):
                 first = False
             acc += doc
         body = pretty.nest(self.indent, acc) + NULL_BREAK
-        return pretty.group(pretty.text(opar) + body + pretty.text(cpar))
+        return pretty.agrp(pretty.text(opar) + body + pretty.text(cpar))
 
     def constant(
         self, constant: int | float | None | str | bytes | bool
@@ -522,7 +522,7 @@ class Prettyfier(Serialiser[pretty.Doc]):
         return pretty.text(f"ref({offset:_d})")
 
     def custom(self, constructor: str, value: pretty.Doc) -> pretty.Doc:
-        return pretty.group(
+        return pretty.agrp(
             pretty.text(f"{constructor}(")
             + pretty.nest(self.indent, NULL_BREAK + value)
             + NULL_BREAK
