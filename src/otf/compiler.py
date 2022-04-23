@@ -140,9 +140,14 @@ class Function(Generic[P, T]):
     _fun: Callable[P, T] | None
     _origin: parser.Function[P, T]
 
-    def __init__(self, origin: parser.Function[P, T]) -> None:
+    def __init__(
+        self, origin: parser.Function[P, T] | parser.ExplodedFunction
+    ) -> None:
         self._fun = None
-        self._origin = origin
+        if isinstance(origin, parser.Function):
+            self._origin = origin
+        else:
+            self._origin = parser._implode_function(origin)
 
     def _compile(self, env: Environment) -> None:
         # TODO: Figure out what makes mypy unhappy here
@@ -155,12 +160,6 @@ class Function(Generic[P, T]):
             self._compile(_OtfEnv.get())
             assert self._fun is not None
         return self._fun(*args, **kwargs)
-
-    @staticmethod
-    def _otf_reconstruct(
-        exploded: parser.ExplodedFunction,
-    ) -> Function[Any, Any]:
-        return Function(origin=pack.cimplode(parser.Function, exploded))
 
 
 @pack.register(pickle=True)
@@ -202,14 +201,6 @@ class Closure(Generic[P, T]):
     def origin(self) -> parser.Function[P, T]:
         return self.target._origin
 
-    @staticmethod
-    def _otf_reconstruct(exploded: ExplodedClosure) -> Closure[Any, Any]:
-        return Closure(
-            environment=pack.cimplode(Environment, exploded["environment"]),
-            # TODO: cimplode....
-            target=exploded["target"],
-        )
-
     def __str__(self) -> str:
         origin = self.target._origin
         return f"OtfFunction::{origin.name}{origin.signature!s}"
@@ -218,14 +209,20 @@ class Closure(Generic[P, T]):
         return f"<{self!s} at {hex(id(self))}>"
 
 
+def closure(exploded: ExplodedClosure) -> Closure[Any, Any]:
+    return Closure(
+        environment=Environment(exploded["environment"]),
+        target=exploded["target"],
+    )
+
+
 @pack.register(pickle=True)
-def _explode_closure(closure: Closure[P, T]) -> tuple[Any, ExplodedClosure]:
+def _explode_closure(c: Closure[P, T]) -> tuple[Any, ExplodedClosure]:
     exploded: ExplodedClosure = {
-        "environment": pack.cexplode(closure.environment),
-        # TODO: pack.cimplode
-        "target": closure.target,
+        "environment": pack.cexplode(c.environment),
+        "target": c.target,
     }
-    return Closure, exploded
+    return closure, exploded
 
 
 class TemplateHole(ast.AST):
@@ -1008,23 +1005,6 @@ class Suspension:
             position=self.position, variables=self.variables, value=value
         )
 
-    @staticmethod
-    def _otf_reconstruct(exploded: ExplodedSuspension) -> Suspension:
-        function = parser._gen_function(
-            name="workflow",
-            body=exploded["code"],
-            signature=inspect.Signature(),
-        )
-        workflow = Workflow[Any, Any](
-            environment=exploded["environment"], origin=function
-        )
-        return Suspension(
-            position=exploded["position"],
-            variables=exploded["variables"],
-            awaiting=exploded["awaiting"],
-            workflow=workflow,
-        )
-
     @property
     def code(self) -> str:
         return self.workflow.origin.body
@@ -1041,18 +1021,35 @@ class Suspension:
         return point.lineno - self.workflow.origin.lineno + 1
 
 
+def suspension(exploded: ExplodedSuspension) -> Suspension:
+    function = parser._gen_function(
+        name="workflow",
+        body=exploded["code"],
+        signature=inspect.Signature(),
+    )
+    workflow = Workflow[Any, Any](
+        environment=exploded["environment"], origin=function
+    )
+    return Suspension(
+        position=exploded["position"],
+        variables=exploded["variables"],
+        awaiting=exploded["awaiting"],
+        workflow=workflow,
+    )
+
+
 @pack.register(pickle=True)
 def _explode_suspension(
-    suspension: Suspension,
+    arg: Suspension,
 ) -> tuple[Any, ExplodedSuspension]:
     exploded: ExplodedSuspension = {
-        "environment": suspension.workflow.environment,
-        "variables": suspension.variables,
-        "awaiting": suspension.awaiting,
-        "code": suspension.code,
-        "position": suspension.position,
+        "environment": arg.workflow.environment,
+        "variables": arg.variables,
+        "awaiting": arg.awaiting,
+        "code": arg.code,
+        "position": arg.position,
     }
-    return Suspension, exploded
+    return suspension, exploded
 
 
 def _otf_suspend(
@@ -1080,11 +1077,16 @@ def _get_builtins() -> Mapping[str, Any]:
     return types.MappingProxyType(env)
 
 
+EMPTY_MAPPING: Mapping[str, Any] = types.MappingProxyType({})
+
+
 class Environment(collections.UserDict[str, Any]):
     """An otf environment contains functions and values."""
 
-    def __init__(self, /, **kwargs: Any) -> None:
-        super().__init__(dict(_get_builtins()), **kwargs)
+    def __init__(
+        self, arg: Mapping[str, Any] = EMPTY_MAPPING, /, **kwargs: Any
+    ) -> None:
+        super().__init__(dict(_get_builtins()), **arg, **kwargs)
 
     @typing.overload
     def function(
@@ -1140,10 +1142,6 @@ class Environment(collections.UserDict[str, Any]):
         # TODO: talk about :mod:`asyncio`
         parsed = parser.Function[P, T].from_function(fn)
         return Workflow[P, T](environment=self, origin=parsed)
-
-    @staticmethod
-    def _otf_reconstruct(exploded: dict[str, Any]) -> Environment:
-        return Environment(**exploded)
 
 
 @pack.register(pickle=True)

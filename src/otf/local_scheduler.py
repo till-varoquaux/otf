@@ -47,17 +47,18 @@ class Future(Generic[T]):
     def uid(self) -> str:
         return f"{self.scheduler_id}:{self.local_id}"
 
-    @staticmethod
-    def _otf_reconstruct(exploded: ExplodedFuture) -> Future[Any]:
-        scheduler_id, local_id = exploded["uid"].split(":")
-        return Future(scheduler_id, int(local_id), task=exploded["task"])
+
+def future(exploded: ExplodedFuture) -> Future[Any]:
+    """Function used by pack to recreate the futures..."""
+    scheduler_id, local_id = exploded["uid"].split(":")
+    return Future(scheduler_id, int(local_id), task=exploded["task"])
 
 
 @pack.register
 def _explode_future(
     fut: Future[Any],
-) -> tuple[Type[Future[Any]], ExplodedFuture]:
-    return Future, {"uid": fut.uid, "task": fut.task}
+) -> tuple[Callable[[ExplodedFuture], Future[Any]], ExplodedFuture]:
+    return future, {"uid": fut.uid, "task": fut.task}
 
 
 @dataclasses.dataclass
@@ -258,5 +259,5 @@ def defer(
     """
     assert isinstance(fn, compiler.Function | compiler.Closure)
     context = _CurrentContext.get()
-    task = runtime.task(fn, *args, **kwargs)
+    task = runtime.Task.make(fn, *args, **kwargs)
     return context.submit(task)

@@ -76,7 +76,7 @@ def ackerman(m, n):
 
 
 PRETTY_ACK = """\
-otf.Closure(
+otf.closure(
     {
         'environment': {
             'ackerman': otf.Function(
@@ -226,7 +226,6 @@ def test_tuple():
     v = 1, 2
     assert pack.explode(v) == pack.Custom("tuple", [1, 2])
     assert pack.cexplode(v) == [1, 2]
-    assert pack.cimplode(tuple, [1, 2]) == (1, 2)
     assert pack.implode(pack.Custom("tuple", [1, 2])) == (1, 2)
 
 
@@ -283,11 +282,11 @@ class IdGetter:
     def __init__(self):
         self.value = id(self)
 
-    @classmethod
-    def _otf_reconstruct(cls, value: int):
-        v = cls.__new__(cls)
-        v.value = value
-        return v
+
+def id_getter(value: int):
+    v = IdGetter.__new__(IdGetter)
+    v.value = value
+    return v
 
 
 def test_register_random_holder():
@@ -296,7 +295,7 @@ def test_register_random_holder():
 
     @pack.register(pickle=True)
     def reduce_random_getter(i: IdGetter):
-        return IdGetter, i.value
+        return id_getter, i.value
 
     reconstructed = pickle.loads(pickle.dumps(rg))
     reconstructed2 = pack.copy(rg)

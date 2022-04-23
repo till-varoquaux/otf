@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import typing
-from typing import Any, Callable, Generic, ParamSpec, Type, TypedDict, TypeVar
+from typing import Any, Callable, Generic, ParamSpec, TypedDict, TypeVar
 
 from . import compiler, pack, utils
 
@@ -83,9 +83,14 @@ union
     _name: str
     _value: utils.Addressable
 
-    def __init__(self, obj: utils.Addressable) -> None:
-        object.__setattr__(self, "_value", obj)
-        object.__setattr__(self, "_name", utils.get_locate_name(obj))
+    def __init__(self, obj: utils.Addressable | str) -> None:
+        if isinstance(obj, str):
+            # Used for the pack de-serialiser in `pack`
+            object.__setattr__(self, "_name", obj)
+            object.__setattr__(self, "_value", utils.locate(obj))
+        else:
+            object.__setattr__(self, "_value", obj)
+            object.__setattr__(self, "_name", utils.get_locate_name(obj))
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return typing.cast(Callable[..., Any], self._value)(*args, **kwargs)
@@ -116,13 +121,6 @@ union
         """Get the wrapped value."""
         return self._value
 
-    @staticmethod
-    def _otf_reconstruct(name: str) -> NamedReference[Any]:
-        res = NamedReference.__new__(NamedReference)
-        object.__setattr__(res, "_name", name)
-        object.__setattr__(res, "_value", utils.locate(name))
-        return res
-
 
 @pack.register(pickle=True)
 def _explode_namedref(namedref: NamedReference[Any]) -> tuple[Any, str]:
@@ -150,16 +148,41 @@ class Task(Generic[T]):
         return self.function(*self.args, **self.kwargs)
 
     @staticmethod
-    def _otf_reconstruct(exploded: ExplodedTask) -> Task[Any]:
-        return Task(
-            function=exploded["function"],
-            args=exploded.get("args", []),
-            kwargs=exploded.get("kwargs", {}),
-        )
+    def make(
+        fn: compiler.Closure[P, T] | compiler.Function[P, T],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Task[T]:
+        """Create a :class:`Task`.
+
+        This is useful when implementing schedulers. We capture the function,
+        the arguments and the environment it runs in.
+
+        """
+        if isinstance(fn, compiler.Function):
+            function = compiler.Closure[P, T](
+                # TODO: add an option to trim and copy the environment
+                environment=compiler._OtfEnv.get(),
+                target=fn,
+            )
+        else:
+            function = fn
+        return Task(function=function, args=[*args], kwargs=dict(**kwargs))
+
+
+def task(exploded: ExplodedTask) -> Task[Any]:
+    return Task(
+        function=exploded["function"],
+        args=exploded.get("args", []),
+        kwargs=exploded.get("kwargs", {}),
+    )
 
 
 @pack.register
-def _explode_task(t: Task[Any]) -> tuple[Type[Task[Any]], ExplodedTask]:
+def _explode_task(
+    t: Task[Any],
+) -> tuple[Callable[[ExplodedTask], Task[Any]], ExplodedTask]:
     res: ExplodedTask = {"function": t.function}
     if t.args != []:
         res["args"] = t.args
@@ -167,27 +190,4 @@ def _explode_task(t: Task[Any]) -> tuple[Type[Task[Any]], ExplodedTask]:
     if t.kwargs != {}:
         res["kwargs"] = t.kwargs
 
-    return Task, res
-
-
-def task(
-    fn: compiler.Closure[P, T] | compiler.Function[P, T],
-    /,
-    *args: P.args,
-    **kwargs: P.kwargs,
-) -> Task[T]:
-    """Create a :class:`Task`.
-
-    This is useful when implementing schedulers. We capture the function, the
-    arguments and the environment it runs in.
-
-    """
-    if isinstance(fn, compiler.Function):
-        function = compiler.Closure[P, T](
-            # TODO: add an option to trim and copy the environment
-            environment=compiler._OtfEnv.get(),
-            target=fn,
-        )
-    else:
-        function = fn
-    return Task(function=function, args=[*args], kwargs=dict(**kwargs))
+    return task, res

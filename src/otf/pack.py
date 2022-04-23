@@ -39,17 +39,7 @@ import math
 import types
 import typing
 import weakref
-from typing import (
-    Any,
-    Callable,
-    Generic,
-    Iterable,
-    Iterator,
-    Protocol,
-    Type,
-    TypeVar,
-    Union,
-)
+from typing import Any, Callable, Generic, Iterable, Iterator, Type, TypeVar
 
 from . import ast_utils, pretty, utils
 
@@ -136,34 +126,9 @@ Value = (
 )
 
 
-@typing.runtime_checkable
-class Implodable(Protocol[Contra]):
-    @classmethod
-    def _otf_reconstruct(
-        cls: Type[Contra], _: Any
-    ) -> Contra:  # pragma: no cover
-        ...
-
-
-CustomImploder = Union[CustomImplodeFn[T], Type[Implodable[T]]]
-
-
-def _get_imploder(x: CustomImploder[T]) -> CustomImplodeFn[T]:
-    """Hack to hide reconstruction functions
-
-    This is a hidden feature that allows us to get cleaner :class:`Custom`
-    blocks.
-
-    """
-    if isinstance(x, Implodable):
-        return x._otf_reconstruct
-    return typing.cast(CustomImplodeFn[T], x)
-
-
 @functools.lru_cache()
 def _get_named_imploder(name: str) -> CustomImplodeFn[Any]:
-    obj = typing.cast(CustomImploder[Any], utils.locate(name))
-    return _get_imploder(obj)
+    return typing.cast(CustomImplodeFn[Any], utils.locate(name))
 
 
 Reduced = tuple[Callable[[Any], T], Any]
@@ -255,8 +220,8 @@ def register(
 
             @functools.wraps(function)
             def reduce(v: T) -> tuple[Callable[[V], T], tuple[V]]:
-                x, y = function(v)
-                return _get_imploder(x), (y,)
+                imploder, arg = function(v)
+                return imploder, (arg,)
 
             copyreg.pickle(cls, reduce)  # type: ignore[arg-type]
         DISPATCH_TABLE[cls] = function
@@ -285,16 +250,11 @@ def _get_custom(ty: Type[T]) -> Reducer[T]:
     return serialiser
 
 
-def cexplode(v: Implodable[T]) -> Any:
+def cexplode(v: Any) -> Any:
     """Private function used to pull apart a custom type"""
     serialiser = _get_custom(type(v))
     _fn, res = serialiser(v)
     return res
-
-
-def cimplode(type: Type[T], v: Any) -> T:
-    """Private function used to rebuild a custom type"""
-    return _get_imploder(type)(v)
 
 
 class Serialiser(Generic[T], abc.ABC):

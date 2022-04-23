@@ -173,7 +173,7 @@ def test_explode_function():
         return x + y
 
     assert pack.explode(add) == pack.Custom(
-        "otf.Closure",
+        "otf.closure",
         {
             "environment": {
                 "add": pack.Custom(

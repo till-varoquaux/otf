@@ -56,13 +56,13 @@ def test_task():
     def add(x=0, y=0):
         return x + y
 
-    assert pack.cexplode(runtime.task(add)) == {"function": add}
-    assert pack.cexplode(runtime.task(add, 5, y=6)) == {
+    assert pack.cexplode(runtime.Task.make(add)) == {"function": add}
+    assert pack.cexplode(runtime.Task.make(add, 5, y=6)) == {
         "function": add,
         "args": [5],
         "kwargs": {"y": 6},
     }
 
-    t2 = pack.copy(runtime.task(add, 5, y=6))
+    t2 = pack.copy(runtime.Task.make(add, 5, y=6))
 
     assert t2.run() == 11

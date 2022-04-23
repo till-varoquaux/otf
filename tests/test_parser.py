@@ -230,7 +230,7 @@ def test_explode_function():
     # fmt: on
 
     exploded = pack.Custom(
-        "otf.parser.Function",
+        "otf.parser._implode_function",
         {
             "body": "        return a + b",
             "name": "f",
@@ -253,7 +253,7 @@ def test_explode_function2():
     # fmt: on
 
     exploded = pack.Custom(
-        "otf.parser.Function",
+        "otf.parser._implode_function",
         {
             "body": "                 ...: return a + b",
             "name": "f",

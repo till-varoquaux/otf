@@ -5,6 +5,8 @@ from importlib import metadata
 
 # This import is used to get short names from utils.get_locate_name
 from .compiler import Function  # noqa: F401
+from .compiler import closure  # noqa: F401
+from .compiler import suspension  # noqa: F401
 from .compiler import Closure, Environment, Suspension, Workflow
 from .decorators import environment, function
 from .pack import dumps, loads, register

@@ -361,17 +361,17 @@ class Function(Generic[P, T]):
             signature=_get_signature(fn),
         )
 
-    @staticmethod
-    def _otf_reconstruct(exploded: ExplodedFunction) -> Function[Any, Any]:
-        signature = _implode_signature(exploded["signature"])
-        return _gen_function(
-            name=exploded["name"], body=exploded["body"], signature=signature
-        )
+
+def _implode_function(exploded: ExplodedFunction) -> Function[Any, Any]:
+    signature = _implode_signature(exploded["signature"])
+    return _gen_function(
+        name=exploded["name"], body=exploded["body"], signature=signature
+    )
 
 
 @pack.register(pickle=True)
 def _explode_function(fn: Function[Any, Any]) -> tuple[Any, ExplodedFunction]:
-    return Function, {
+    return _implode_function, {
         "name": fn.name,
         "signature": _explode_signature(fn.signature),
         "body": fn.body,
