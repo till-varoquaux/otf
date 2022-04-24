@@ -253,38 +253,23 @@ MISSING = object()
 
 
 def _get_custom(ty: Type[T]) -> Reducer[T]:
-    """Get the custom serialiser for a given type."""
-    serialiser = DISPATCH_TABLE.get(ty)
-    if serialiser is None:
+    """Get the custom reducer for a given type."""
+    reducer = DISPATCH_TABLE.get(ty)
+    if reducer is None:
         raise TypeError(
             f"Object of type {ty.__name__} cannot be serialised by OTF"
         )
-    return serialiser
+    return reducer
 
 
-def cexplode(v: Any) -> Any:
+def shallow_reduce(v: Any) -> Any:
     """Private function used to pull apart a custom type"""
-    serialiser = _get_custom(type(v))
-    _fn, res = serialiser(v)
+    reducer = _get_custom(type(v))
+    _fn, res = reducer(v)
     return res
 
 
-class Serialiser(Generic[T], abc.ABC):
-
-    cnt: int
-    # id -> position
-    memo: dict[int, int | None]
-    # Since we rely on `id` to detect duplicates we have to hold on to all the
-    # intermediate values to make sure addresses do not get reused
-    transient: list[Any]
-    string_hashcon_length: int
-
-    def __init__(self, string_hashcon_length: int = 32) -> None:
-        self.string_hashcon_length = string_hashcon_length
-        self.cnt = -1
-        self.memo = {}
-        self.transient = []
-
+class Accumulator(Generic[T], abc.ABC):
     @abc.abstractmethod
     def constant(
         self, constant: int | float | None | str | bytes | bool
@@ -318,58 +303,84 @@ class Serialiser(Generic[T], abc.ABC):
         # wrap the root value
         return value
 
-    def _gen_kv(self, obj: dict[Any, Any]) -> Iterator[tuple[T, T]]:
-        for key, value in obj.items():
+
+def _mk_kv_reducer(
+    reduce: Callable[[T], V]
+) -> Callable[[Iterable[tuple[T, T]]], Iterator[tuple[V, V]]]:
+    def res(items: Iterable[tuple[T, T]]) -> Iterator[tuple[V, V]]:
+        for key, value in items:
             # Note that the order is important here for references...
-            ek = self.serialise(key)
-            ev = self.serialise(value)
+            ek = reduce(key)
+            ev = reduce(value)
             yield (ek, ev)
 
-    def serialise(self, v: Any) -> T:
-        self.cnt += 1
-        current = self.cnt
+    return res
+
+
+def reduce_runtime(
+    obj: Any, prod: Accumulator[T], string_hashcon_length: int = 32
+) -> T:
+    cnt: int = -1
+    # id -> position
+    memo: dict[int, int | None] = {}
+    # Since we rely on `id` to detect duplicates we have to hold on to all the
+    # intermediate values to make sure addresses do not get reused
+    transient: list[Any] = []
+
+    constant = prod.constant
+    reference = prod.reference
+    sequence = prod.sequence
+    mapping = prod.mapping
+    custom = prod.custom
+
+    def _custom_arg(arg: Any) -> Iterator[T]:
+        # Avoid the `id` being reused by other transient values
+        transient.append(arg)
+        yield reduce(arg)
+
+    def reduce(v: Any) -> T:
+        nonlocal cnt
+        cnt += 1
+        current = cnt
         ty = type(v)
         # We do exact type comparisons instead of calls to `isinstance` to
         # avoid running into problems with inheritance
         if ty in (int, float, types.NoneType, bool):
-            return self.constant(v)
+            return constant(v)
         if ty in (bytes, str):
-            if len(v) >= self.string_hashcon_length:
+            if len(v) >= string_hashcon_length:
                 addr = -abs(hash(v))
-                memoized = self.memo.get(addr, MISSING)
-                self.memo[addr] = current
+                memoized = memo.get(addr, MISSING)
+                memo[addr] = current
                 if isinstance(memoized, int):
-                    return self.reference(current - memoized)
-            return self.constant(v)
+                    return reference(current - memoized)
+            return constant(v)
         addr = id(v)
-        memoized = self.memo.get(addr, MISSING)
+        memoized = memo.get(addr, MISSING)
         if isinstance(memoized, int):
-            self.memo[addr] = current
-            return self.reference(current - memoized)
+            memo[addr] = current
+            return reference(current - memoized)
         if memoized is None:
             raise ValueError("Recursive value found")
-        self.memo[addr] = None
+        memo[addr] = None
         res: T
         if ty is list:
-            res = self.sequence(self.serialise(x) for x in v)
+            res = sequence(reduce(x) for x in v)
         elif ty is dict:
-            res = self.mapping(self._gen_kv(v))
+            res = mapping(_gen_kv(v.items()))
         else:
-            serialiser = _get_custom(ty)
-            fn, arg = serialiser(v)
-            res = self.custom(utils.get_locate_name(fn), self._custom_arg(arg))
-        self.memo[addr] = current
-        if current == 0:
-            return self.root(res)
+            deconstructor = _get_custom(ty)
+            fn, arg = deconstructor(v)
+            res = custom(utils.get_locate_name(fn), _custom_arg(arg))
+        memo[addr] = current
         return res
 
-    def _custom_arg(self, arg: Any) -> Iterator[T]:
-        # Avoid the `id` being reused by other transient values
-        self.transient.append(arg)
-        yield self.serialise(arg)
+    _gen_kv = _mk_kv_reducer(reduce)
+
+    return prod.root(reduce(obj))
 
 
-class Exploder(Serialiser[Value]):
+class Exploder(Accumulator[Value]):
     def constant(
         self, constant: int | float | None | str | bytes | bool
     ) -> Value:
@@ -396,7 +407,7 @@ class Exploder(Serialiser[Value]):
         return Custom(constructor, arg)
 
 
-class Stringifier(Serialiser[ast.expr]):
+class Stringifier(Accumulator[ast.expr]):
     "Convert a value into an ast fragment"
 
     def constant(
@@ -448,14 +459,13 @@ COL_SEP = pretty.text(",") + pretty.BREAK
 NULL_BREAK = pretty.break_with("")
 
 
-class Prettyfier(Serialiser[pretty.Doc]):
+class Prettyfier(Accumulator[pretty.Doc]):
     "Convert a value into an ast fragment"
 
     NAN: ClassVar[pretty.Doc] = pretty.text("nan")
     INFINITY: ClassVar[pretty.Doc] = pretty.text("inf")
 
-    def __init__(self, indent: int, string_hashcon_length: int = 32) -> None:
-        super().__init__(string_hashcon_length=string_hashcon_length)
+    def __init__(self, indent: int) -> None:
         self.indent = indent
 
     def format_list(
@@ -584,26 +594,26 @@ class ModulePrinter(Prettyfier):
     decls: list[tuple[int, pretty.Doc]]
     targets: dict[int, Boxed | Alias]
     imports: dict[str, str | Exception | None] | None
+    pos: int
 
     def __init__(
         self,
         indent: int,
-        string_hashcon_length: int = 32,
         add_imports: bool = True,
     ) -> None:
-        super().__init__(
-            indent=indent, string_hashcon_length=string_hashcon_length
-        )
+        super().__init__(indent=indent)
         self.targets = {}
         self.decls = []
         self.imports = {} if add_imports else None
+        self.pos = -1
 
     def box(
         self, fn: Callable[P, pretty.Doc], *args: P.args, **kwargs: P.kwargs
     ) -> pretty.Doc:
-        idx = self.cnt
+        self.pos += 1
+        idx = self.pos
         doc = fn(*args, **kwargs)
-        box = self.targets[idx] = Boxed(doc, priority=self.cnt)
+        box = self.targets[idx] = Boxed(doc, priority=self.pos)
         return box
 
     def mapping(
@@ -611,18 +621,27 @@ class ModulePrinter(Prettyfier):
     ) -> pretty.Doc:
         return self.box(super().mapping, items)
 
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> pretty.Doc:
+        self.pos += 1
+        return super().constant(constant)
+
     def sequence(self, items: Iterator[pretty.Doc]) -> pretty.Doc:
         return self.box(super().sequence, items)
 
     def reference(self, offset: int) -> pretty.Doc:
-        idx = self.cnt - offset
-        assert idx in self.targets, self.targets
-        orig = self.targets[idx]
+        self.pos += 1
+        pos = self.pos
+        targets = self.targets
+        idx = pos - offset
+        assert idx in targets, targets
+        orig = targets[idx]
         if isinstance(orig, Alias):
-            self.targets[self.cnt] = orig
+            targets[pos] = orig
             return orig
         doc = orig.value
-        alias = self.targets[self.cnt] = self.targets[idx] = orig.value = Alias(
+        alias = targets[pos] = targets[idx] = orig.value = Alias(
             f"_{len(self.decls)}"
         )
         heapq.heappush(
@@ -638,8 +657,6 @@ class ModulePrinter(Prettyfier):
         return self.box(super().custom, constructor, value)
 
     def root(self, doc: pretty.Doc) -> pretty.Doc:
-        self.targets.clear()
-
         prelude = pretty.EMPTY
 
         import_errors: list[tuple[str, Exception]] = []
@@ -683,69 +700,91 @@ class ModulePrinter(Prettyfier):
         return pretty.hgrp(prelude + doc + NULL_BREAK)
 
 
-class Deserialiser(Generic[T]):
+# Helping out mypy a bit
+_mk_list: Callable[[Iterable[Any]], Any] = list
+_mk_dict: Callable[[Iterable[tuple[Any, Any]]], Any] = dict
+
+
+class RuntimeValueBuilder(Accumulator[Any]):
     memo: list[Any]
 
     def __init__(self) -> None:
         self.memo = []
 
-    def custom(self, constructor: str, value: T) -> Any:
-        return _get_named_imploder(constructor)(self.deserialise(value))
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> Any:
+        self.memo.append(constant)
+        return constant
 
     def reference(self, offset: int) -> Any:
-        return self.memo[len(self.memo) - 1 - offset]
-
-    def sequence(self, items: Iterable[T]) -> Any:
-        return [self.deserialise(elt) for elt in items]
-
-    def mapping(self, items: Iterable[tuple[T, T]]) -> Any:
-        res = {}
-        for key, value in items:
-            # Order of evaluation matters so we don't use a dictionary
-            # comprehension
-            ekey = self.deserialise(key)
-            res[ekey] = self.deserialise(value)
+        res = self.memo[len(self.memo) - offset]
+        self.memo.append(res)
         return res
 
-    @abc.abstractmethod
-    def visit(self, exp: T) -> Any:  # pragma: no cover
-        ...
+    def _custom(self, constructor: str, value: Iterator[Any]) -> Any:
+        (arg,) = value
+        return _get_named_imploder(constructor)(arg)
 
-    def deserialise(self, exp: T) -> Any:
+    def _reduce(
+        self, fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
+    ) -> Any:
         current = len(self.memo)
         self.memo.append(None)
-        res = self.visit(exp)
+        res = fn(*args, **kwargs)
         self.memo[current] = res
         return res
 
+    def custom(self, constructor: str, value: Iterator[Any]) -> Any:
+        return self._reduce(self._custom, constructor, value)
 
-class Imploder(Deserialiser[Value]):
-    def visit(self, exp: Value) -> Any:
-        if isinstance(exp, int | float | str | bytes | bool | None):
-            return exp
+    def sequence(self, items: Iterable[T]) -> Any:
+        return self._reduce(_mk_list, items)
+
+    def mapping(self, items: Iterable[tuple[Any, Any]]) -> Any:
+        return self._reduce(_mk_dict, items)
+
+
+def reduce_runtime_value(value: Value, prod: Accumulator[T]) -> T:
+    constant = prod.constant
+    reference = prod.reference
+    sequence = prod.sequence
+    mapping = prod.mapping
+    custom = prod.custom
+
+    def reduce(exp: Value) -> T:
+        if isinstance(exp, (int, float, str, bytes, bool, type(None))):
+            return constant(exp)
         elif isinstance(exp, list):
-            return self.sequence(exp)
+            return sequence((reduce(elt) for elt in exp))
         elif isinstance(exp, dict | Mapping):
-            return self.mapping(list(exp.items()))
+            return mapping(_gen_kv(exp.items()))
         elif isinstance(exp, Reference):
-            return self.reference(exp.offset)
+            return reference(exp.offset)
         elif isinstance(exp, Custom):
-            return self.custom(exp.constructor, exp.value)
+            return custom(exp.constructor, _custom_arg(exp.value))
         else:
             raise TypeError(
                 f"Object of type {type(exp).__name__} cannot be de-serialised "
                 "by OTF"
             )
 
+    _gen_kv = _mk_kv_reducer(reduce)
 
-class UnStringifier(Deserialiser[ast.expr]):
-    content: str
+    def _custom_arg(arg: Any) -> Iterator[T]:
+        yield reduce(arg)
 
-    def __init__(self, content: str) -> None:
-        self.content = content
-        super().__init__()
+    return prod.root(reduce(value))
 
-    def visit(self, expr: ast.expr) -> Any:
+
+def reduce_ast_expr(expr: ast.expr, orig: str, prod: Accumulator[T]) -> T:
+    constant = prod.constant
+    reference = prod.reference
+    sequence = prod.sequence
+    mapping = prod.mapping
+    custom = prod.custom
+
+    def reduce(expr: ast.expr) -> T:
         # We need a smattering of `type: ignore` statements because version
         # 0.942 of mypy.
         #
@@ -755,30 +794,30 @@ class UnStringifier(Deserialiser[ast.expr]):
             case ast.Constant(value) | ast.UnaryOp(  # type: ignore[misc]
                 ast.UAdd(), ast.Constant(float(value) | int(value))
             ):
-                return value
+                return constant(value)
             case ast.UnaryOp(  # type: ignore[misc]
                 ast.USub(),
                 ast.Constant(float(num) | int(num)),
             ):
-                return -num
+                return constant(-num)
             case ast.Name("nan"):  # type: ignore[misc]
-                return math.nan
+                return constant(math.nan)
             case (
                 ast.Name("inf")  # type: ignore[misc]
                 | ast.UnaryOp(ast.UAdd(), ast.Name("inf"))  # type: ignore[misc]
             ):
-                return math.inf
+                return constant(math.inf)
             case ast.UnaryOp(ast.USub(), ast.Name("inf")):  # type: ignore[misc]
-                return -math.inf
+                return constant(-math.inf)
             # /Primitives
             case ast.List(l):  # type: ignore[misc]
-                return self.sequence(l)
+                return sequence((reduce(x) for x in l))
             case ast.Dict(k, v):  # type: ignore[misc]
-                return self.mapping(list(zip(k, v)))
+                return mapping(_gen_kv(zip(k, v)))
             case ast.Call(  # type: ignore[misc]
                 ast.Name("ref"), [ast.Constant(int(offset))]
             ):
-                return self.reference(offset)
+                return reference(offset)
             case ast.Call(constructor, [arg]):  # type: ignore[misc]
                 path = []
                 while True:
@@ -789,16 +828,23 @@ class UnStringifier(Deserialiser[ast.expr]):
                         case ast.Attribute(constructor, elt):
                             path.append(elt)
                         case _:
-                            self.error(constructor)
-                return self.custom(".".join(reversed(path)), arg)
-        self.error(expr)
+                            error(constructor)
+                return custom(".".join(reversed(path)), _custom_arg(arg))
+        error(expr)
 
-    def error(self, node: ast.expr) -> typing.NoReturn:
+    _gen_kv = _mk_kv_reducer(reduce)
+
+    def _custom_arg(arg: Any) -> Iterator[T]:
+        yield reduce(arg)
+
+    def error(node: ast.expr) -> typing.NoReturn:
         ast_utils.raise_at(
             ValueError("Malformed node or string"),
             node=node,
-            content=self.content,
+            content=orig,
         )
+
+    return prod.root(reduce(expr))
 
 
 def explode(v: Any) -> Value:
@@ -807,7 +853,7 @@ def explode(v: Any) -> Value:
     Args:
       v:
     """
-    return Exploder().serialise(v)
+    return reduce_runtime(v, Exploder())
 
 
 def implode(v: Value) -> Any:
@@ -816,7 +862,7 @@ def implode(v: Value) -> Any:
     Args:
       v:
     """
-    return Imploder().deserialise(v)
+    return reduce_runtime_value(v, RuntimeValueBuilder())
 
 
 def dumps(obj: Any, indent: int | None = None, width: int = 60) -> str:
@@ -830,17 +876,16 @@ def dumps(obj: Any, indent: int | None = None, width: int = 60) -> str:
       width(int): Maximum line length (when *indent* is specified)
     """
     if indent is None:
-        return ast.unparse(Stringifier().serialise(obj))
+        return ast.unparse(reduce_runtime(obj, Stringifier()))
     else:
         assert indent >= 0
         assert width > indent
-        pr = Prettyfier(indent=indent)
-        doc = pr.serialise(obj)
+        doc = reduce_runtime(obj, Prettyfier(indent=indent))
         return doc.to_string(width)
 
 
 def edit(obj: Any, add_imports: bool = True) -> str:
-    doc = ModulePrinter(indent=4, add_imports=add_imports).serialise(obj)
+    doc = reduce_runtime(obj, ModulePrinter(indent=4, add_imports=add_imports))
     return doc.to_string(80)
 
 
@@ -851,17 +896,18 @@ def loads(s: str) -> Any:
     """
     e = ast.parse(s, mode="eval")
     assert isinstance(e, ast.Expression), type(e)
-    return UnStringifier(s).deserialise(e.body)
+    return reduce_ast_expr(e.body, orig=s, prod=RuntimeValueBuilder())
 
 
 def copy(v: T) -> T:
     """Copy a value using its representation.
 
-    ``copy(v)`` is equivalent to ``implode(explode(v))``.
+    ``copy(v)`` is equivalent to ``loads(dumps(v))``.
 
     Args:
       v:
     """
-    # For performance reasons we might want to make a specialised class down the
-    # line.
-    return implode(explode(v))  # type: ignore[no-any-return]
+    # For performance reasons we might want to add the ability to not copy
+    # immutable values.
+    res: T = reduce_runtime(v, RuntimeValueBuilder())
+    return res

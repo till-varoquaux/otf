@@ -65,10 +65,13 @@ def unedit(s: str):
 
 
 def roundtrip(v):
+    exploded = pack.explode(v)
+    v2 = pack.implode(exploded)
     indented = pack.dumps(v, indent=4)
-
-    v2 = pack.copy(v)
     flat = pack.dumps(v)
+    flat2 = pack.reduce_runtime_value(exploded, pack.Stringifier())
+
+    assert flat == ast.unparse(flat2)
     utils.assert_eq_ast(flat, indented)
     v3 = pack.loads(flat)
     v4 = unedit(pack.edit(v))
@@ -327,7 +330,7 @@ def test_reccursive():
 def test_tuple():
     v = 1, 2
     assert pack.explode(v) == pack.Custom("tuple", [1, 2])
-    assert pack.cexplode(v) == [1, 2]
+    assert pack.shallow_reduce(v) == [1, 2]
     assert pack.implode(pack.Custom("tuple", [1, 2])) == (1, 2)
 
 

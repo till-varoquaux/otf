@@ -166,7 +166,7 @@ class Function(Generic[P, T]):
 def _explode_function(
     value: Function[P, T]
 ) -> tuple[Any, parser.ExplodedFunction]:
-    return Function, pack.cexplode(value._origin)
+    return Function, pack.shallow_reduce(value._origin)
 
 
 class ExplodedClosure(TypedDict, total=True):
@@ -219,7 +219,7 @@ def closure(exploded: ExplodedClosure) -> Closure[Any, Any]:
 @pack.register(pickle=True)
 def _explode_closure(c: Closure[P, T]) -> tuple[Any, ExplodedClosure]:
     exploded: ExplodedClosure = {
-        "environment": pack.cexplode(c.environment),
+        "environment": pack.shallow_reduce(c.environment),
         "target": c.target,
     }
     return closure, exploded
