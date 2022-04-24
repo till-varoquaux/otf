@@ -45,7 +45,9 @@ def test_namedref():
 
 def test_serialize_namedref():
     mth = runtime.NamedReference(math)
-    assert pack.explode(mth) == pack.Custom("otf.NamedReference", "math")
+    assert pack.tree.explode(mth) == pack.tree.Custom(
+        "otf.NamedReference", "math"
+    )
     assert mth.floor(mth.e) == 2
     copied = pickle.loads(pickle.dumps(mth))
     assert copied.floor(copied.e) == 2
@@ -56,8 +58,8 @@ def test_task():
     def add(x=0, y=0):
         return x + y
 
-    assert pack.shallow_reduce(runtime.Task.make(add)) == {"function": add}
-    assert pack.shallow_reduce(runtime.Task.make(add, 5, y=6)) == {
+    assert pack.base.shallow_reduce(runtime.Task.make(add)) == {"function": add}
+    assert pack.base.shallow_reduce(runtime.Task.make(add, 5, y=6)) == {
         "function": add,
         "args": [5],
         "kwargs": {"y": 6},

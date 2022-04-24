@@ -172,11 +172,11 @@ def test_explode_function():
     def add(x, y):
         return x + y
 
-    assert pack.explode(add) == pack.Custom(
+    assert pack.tree.explode(add) == pack.tree.Custom(
         "otf.closure",
         {
             "environment": {
-                "add": pack.Custom(
+                "add": pack.tree.Custom(
                     "otf.Function",
                     value={
                         "name": "add",
@@ -185,7 +185,7 @@ def test_explode_function():
                     },
                 )
             },
-            "target": utils.InstanceOf(pack.Reference),
+            "target": utils.InstanceOf(pack.tree.Reference),
         },
     )
 

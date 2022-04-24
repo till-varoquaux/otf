@@ -25,6 +25,8 @@ extensions = [
 autodoc_typehints = "none"
 autodoc_member_order = "bysource"
 
+doctest_test_doctest_blocks = ""
+
 intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 
 graphviz_output_format = "svg"

@@ -185,7 +185,9 @@ def fill_linecache(data: str) -> str:
     return filename
 
 
-def raise_at(exc: Exception, node: Located, content: str) -> typing.NoReturn:
+def raise_at(
+    exc: Exception, node: Located, content: str, *, filename: str | None = None
+) -> typing.NoReturn:
     """Raise an exception for a given location in a string.
 
     This is a helper function to make sure we get traceback that go up all the
@@ -205,7 +207,7 @@ def raise_at(exc: Exception, node: Located, content: str) -> typing.NoReturn:
             ],
             type_ignores=[],
         ),
-        filename=fill_linecache(content),
+        filename=fill_linecache(content) if filename is None else filename,
         mode="exec",
     )
     exec(code, {"e": exc})

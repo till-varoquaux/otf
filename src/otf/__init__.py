@@ -9,7 +9,7 @@ from .compiler import closure  # noqa: F401
 from .compiler import suspension  # noqa: F401
 from .compiler import Closure, Environment, Suspension, Workflow
 from .decorators import environment, function
-from .pack import dumps, loads, register
+from .pack import COMPACT, EXECUTABLE, PRETTY, dumps, loads, register
 from .runtime import NamedReference
 
 # http://epydoc.sourceforge.net/manual-fields.html#module-metadata-variables
@@ -31,4 +31,7 @@ __all__ = (
     "loads",
     "dumps",
     "register",
+    "COMPACT",
+    "PRETTY",
+    "EXECUTABLE",
 )

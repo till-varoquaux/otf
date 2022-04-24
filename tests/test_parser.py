@@ -218,7 +218,7 @@ def test_explode_sig(asig, exploded):
 
 def explode(f):
     fn = parser.Function.from_function(f)
-    return pack.explode(fn)
+    return pack.tree.explode(fn)
 
 
 def test_explode_function():
@@ -229,7 +229,7 @@ def test_explode_function():
 
     # fmt: on
 
-    exploded = pack.Custom(
+    exploded = pack.tree.Custom(
         "otf.parser._implode_function",
         {
             "body": "        return a + b",
@@ -238,7 +238,7 @@ def test_explode_function():
         },
     )
     assert explode(f) == exploded
-    reconstituted = pack.implode(exploded)
+    reconstituted = pack.tree.implode(exploded)
     assert linecache.getlines(reconstituted.filename) == [
         "def f(a, *, b=...):\n",
         "        return a + b\n",
@@ -252,7 +252,7 @@ def test_explode_function2():
 
     # fmt: on
 
-    exploded = pack.Custom(
+    exploded = pack.tree.Custom(
         "otf.parser._implode_function",
         {
             "body": "                 ...: return a + b",
@@ -261,7 +261,7 @@ def test_explode_function2():
         },
     )
     assert explode(f) == exploded
-    reconstituted = pack.implode(exploded)
+    reconstituted = pack.tree.implode(exploded)
     assert linecache.getlines(reconstituted.filename) == [
         "def f(a, *, b=...): return a + b\n"
     ]

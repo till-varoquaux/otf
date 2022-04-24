@@ -30,7 +30,9 @@ QUICK_BROWN_FOX = "The quick brown fox jumps over the lazy dog"
 @pytest.fixture(autouse=True)
 def _auto_clean(monkeypatch):
     old_dispatch_table = copyreg.dispatch_table.copy()
-    monkeypatch.setattr(pack, "DISPATCH_TABLE", pack.DISPATCH_TABLE.copy())
+    monkeypatch.setattr(
+        pack.base, "DISPATCH_TABLE", pack.base.DISPATCH_TABLE.copy()
+    )
     yield
     copyreg.dispatch_table.clear()
     copyreg.dispatch_table.update(old_dispatch_table)
@@ -65,16 +67,16 @@ def unedit(s: str):
 
 
 def roundtrip(v):
-    exploded = pack.explode(v)
-    v2 = pack.implode(exploded)
+    exploded = pack.tree.explode(v)
+    v2 = pack.tree.implode(exploded)
     indented = pack.dumps(v, indent=4)
     flat = pack.dumps(v)
-    flat2 = pack.reduce_runtime_value(exploded, pack.Stringifier())
+    flat2 = pack.tree.reduce(exploded, pack.text.Stringifier())
 
     assert flat == ast.unparse(flat2)
     utils.assert_eq_ast(flat, indented)
     v3 = pack.loads(flat)
-    v4 = unedit(pack.edit(v))
+    v4 = unedit(pack.dumps(v, format=pack.EXECUTABLE))
     # nan can wreak havoc in comparisons so we compare pickles...
     assert (
         pickle.dumps(v)
@@ -142,14 +144,14 @@ def test_dumps():
 
 
 def test_get_import(monkeypatch):
-    assert pack._get_import("otf.Function") == "otf"
-    assert pack._get_import("otf.compiler.Function") == "otf.compiler"
+    assert pack.text._get_import("otf.Function") == "otf"
+    assert pack.text._get_import("otf.compiler.Function") == "otf.compiler"
 
-    assert pack._get_import("math") == "math"
-    assert pack._get_import("float") is None
-    assert pack._get_import("otf.Function") == "otf"
+    assert pack.text._get_import("math") == "math"
+    assert pack.text._get_import("float") is None
+    assert pack.text._get_import("otf.Function") == "otf"
 
-    assert isinstance(pack._get_import("I.DoNot.Exist"), ImportError)
+    assert isinstance(pack.text._get_import("I.DoNot.Exist"), ImportError)
 
 
 def bad_locate(_):
@@ -160,18 +162,18 @@ def test_get_import_pb(monkeypatch):
 
     monkeypatch.setattr("otf.utils.locate", bad_locate)
 
-    assert isinstance(pack._get_import("what.ever"), RuntimeError)
+    assert isinstance(pack.text._get_import("what.ever"), RuntimeError)
 
 
-def test_edit():
-    assert pack.edit([]) == "[]\n"
-    assert pack.edit((math.nan, math.inf, -math.inf)) == (
-        'tuple([float("nan"), float("infinity"), -float("infinity")])\n'
-    )
+def test_dump_exec():
+    assert pack.dumps([], format=pack.EXECUTABLE) == "[]\n"
+    assert pack.dumps(
+        (math.nan, math.inf, -math.inf), format=pack.EXECUTABLE
+    ) == ('tuple([float("nan"), float("infinity"), -float("infinity")])\n')
     x = {}
     v = (x, x)
     assert (
-        pack.edit([v, v, v, v])
+        pack.dumps([v, v, v, v], format=pack.EXECUTABLE)
         == "_0 = {}\n\n_1 = tuple([_0, _0])\n\n[_1, _1, _1, _1]\n"
     )
 
@@ -185,14 +187,21 @@ tuple([1, 2, 3])
 """
 
 
-def test_edit_bad_import(monkeypatch):
+def _dump_exec_no_imports(obj):
+    doc = pack.base.reduce(
+        obj, pack.text.ModulePrinter(indent=4, add_imports=False)
+    )
+    return doc.to_string(80)
+
+
+def test_dump_exec_bad_import(monkeypatch):
     def bad_get_import(s):
         return RuntimeError("locate failed")
 
-    monkeypatch.setattr(pack, "_get_import", bad_get_import)
-    assert pack.edit((1, 2, 3)) == BAD_IMPORT_EXPECTED
+    monkeypatch.setattr(pack.text, "_get_import", bad_get_import)
+    assert pack.dumps((1, 2, 3), format=pack.EXECUTABLE) == BAD_IMPORT_EXPECTED
 
-    assert pack.edit((1, 2, 3), add_imports=False) == ("tuple([1, 2, 3])\n")
+    assert _dump_exec_no_imports((1, 2, 3)) == "tuple([1, 2, 3])\n"
 
 
 EDITABLE_ACKERMAN = r"""import otf
@@ -215,8 +224,8 @@ otf.closure({'environment': {'ackerman': _0}, 'target': _0})
 """
 
 
-def test_edit_acckerman():
-    assert pack.edit(ackerman) == EDITABLE_ACKERMAN
+def test_dump_exec_acckerman():
+    assert pack.dumps(ackerman, format=pack.EXECUTABLE) == EDITABLE_ACKERMAN
 
 
 def double(v):
@@ -261,25 +270,29 @@ def test_loads():
 
 def test_simple():
     with pytest.raises(TypeError):
-        pack.explode(A())
+        pack.tree.explode(A())
     with pytest.raises(TypeError):
-        pack.implode(A())
-    assert pack.explode(5) == 5
+        pack.tree.implode(A())
+    assert pack.tree.explode(5) == 5
     assert (
-        pack.explode([5, None, "a"])
+        pack.tree.explode([5, None, "a"])
         == [5, None, "a"]
-        == pack.implode([5, None, "a"])
+        == pack.tree.implode([5, None, "a"])
         == pack.copy([5, None, "a"])
     )
-    assert pack.explode({5: None}) == {5: None} == pack.implode({5: None})
+    assert (
+        pack.tree.explode({5: None})
+        == {5: None}
+        == pack.tree.implode({5: None})
+    )
     with pytest.raises(TypeError):
-        pack.explode(MyInt(5))
+        pack.tree.explode(MyInt(5))
 
 
 def test_shared():
     v = [1, 2]
-    exploded = [[1, 2], pack.Reference(3), pack.Reference(1)]
-    assert pack.explode([v, v, v]) == exploded
+    exploded = [[1, 2], pack.tree.Reference(3), pack.tree.Reference(1)]
+    assert pack.tree.explode([v, v, v]) == exploded
     v2 = roundtrip([v, v, v])
     assert v2[0] is v2[1] is v2[2]
 
@@ -315,36 +328,41 @@ def test_hash_cons_str():
     lorem_copy = "\n".join(LOREM_IPSUM.split("\n"))
     assert lorem_copy == LOREM_IPSUM
     assert id(lorem_copy) != id(LOREM_IPSUM)
-    assert pack.explode(
+    assert pack.tree.explode(
         [lorem_copy, LOREM_IPSUM, lorem_copy, QUICK_BROWN_FOX]
-    ) == [LOREM_IPSUM, pack.Reference(1), pack.Reference(1), QUICK_BROWN_FOX]
+    ) == [
+        LOREM_IPSUM,
+        pack.tree.Reference(1),
+        pack.tree.Reference(1),
+        QUICK_BROWN_FOX,
+    ]
 
 
 def test_reccursive():
     v = []
     v.append(v)
     with pytest.raises(ValueError):
-        pack.explode(v)
+        pack.tree.explode(v)
 
 
 def test_tuple():
     v = 1, 2
-    assert pack.explode(v) == pack.Custom("tuple", [1, 2])
-    assert pack.shallow_reduce(v) == [1, 2]
-    assert pack.implode(pack.Custom("tuple", [1, 2])) == (1, 2)
+    assert pack.tree.explode(v) == pack.tree.Custom("tuple", [1, 2])
+    assert pack.base.shallow_reduce(v) == [1, 2]
+    assert pack.tree.implode(pack.tree.Custom("tuple", [1, 2])) == (1, 2)
 
 
 def test_infer_reducer_type():
     def f(x: list[int]):
         pass
 
-    assert pack._infer_reducer_type(f) is list
+    assert pack.base._infer_reducer_type(f) is list
 
     def f(x, y):
         pass
 
     with pytest.raises(ValueError):
-        assert pack._infer_reducer_type(f)
+        assert pack.base._infer_reducer_type(f)
 
 
 class ItemGetter:
