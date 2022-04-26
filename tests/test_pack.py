@@ -66,17 +66,27 @@ def unedit(s: str):
         del linecache.cache[filename]
 
 
+def explode_exec(text):
+    return pack.text.reduce(text, pack.tree.NodeBuilder())
+
+
 def roundtrip(v):
     exploded = pack.tree.explode(v)
     v2 = pack.tree.implode(exploded)
     indented = pack.dumps(v, indent=4)
+    executable = pack.dumps(v, format=pack.EXECUTABLE)
+
+    if exploded == exploded:
+        assert pack.text.reduce(indented, pack.tree.NodeBuilder()) == exploded
+        assert explode_exec(executable) == exploded
+
     flat = pack.dumps(v)
     flat2 = pack.tree.reduce(exploded, pack.text.Simple(4))
 
     assert flat == pretty.single_line(flat2)
     utils.assert_eq_ast(flat, indented)
     v3 = pack.loads(flat)
-    v4 = unedit(pack.dumps(v, format=pack.EXECUTABLE))
+    v4 = unedit(executable)
     # nan can wreak havoc in comparisons so we compare pickles...
     assert (
         pickle.dumps(v)
@@ -165,11 +175,26 @@ def test_get_import_pb(monkeypatch):
     assert isinstance(pack.text._get_import("what.ever"), RuntimeError)
 
 
+# It's important that we reload those with the exact same exploded structure to
+# make sure all the transformations between format do not change the size of a
+# tree.
+def test_load_exec_float():
+    assert explode_exec("float(5)") == pack.tree.Custom(
+        constructor="float", value=5
+    )
+    for pos_inf in ("float('inf')", "+float('inf')", "inf", "+inf"):
+        assert explode_exec(pos_inf) == float("inf")
+    for neg_inf in ("-float('inf')", "-float('inf')", "-inf"):
+        assert explode_exec(neg_inf) == -float("inf")
+    for nan in ("nan", "float('nan')"):
+        assert math.isnan(explode_exec(nan))
+
+
 def test_dump_exec():
     assert pack.dumps([], format=pack.EXECUTABLE) == "[]\n"
     assert pack.dumps(
         (math.nan, math.inf, -math.inf), format=pack.EXECUTABLE
-    ) == ('tuple([float("nan"), float("infinity"), -float("infinity")])\n')
+    ) == ('tuple([float("nan"), float("inf"), -float("inf")])\n')
     x = {}
     v = (x, x)
     assert (
@@ -226,6 +251,72 @@ otf.closure({'environment': {'ackerman': _0}, 'target': _0})
 
 def test_dump_exec_acckerman():
     assert pack.dumps(ackerman, format=pack.EXECUTABLE) == EDITABLE_ACKERMAN
+
+
+def test_loads_prelude():
+    with pytest.raises(ValueError, match="Empty document"):
+        pack.loads("# Comments don't show up in the ast\n\n")
+    with pytest.raises(ValueError, match="The last node"):
+        pack.loads("v=5")
+    with pytest.raises(ValueError, match="import ... as"):
+        pack.loads("import c, a as b; 5")
+    with pytest.raises(ValueError, match="`from ... import`"):
+        pack.loads("from a import b; 5")
+    with pytest.raises(ValueError, match="Expression"):
+        pack.loads("5; 5")
+    with pytest.raises(ValueError, match="Assigning to multiple targets"):
+        pack.loads("a = b = 5; 5")
+    with pytest.raises(
+        ValueError, match="Only assigning to top level variables is supported"
+    ):
+        pack.loads("a, b = 5; 5")
+    with pytest.raises(ValueError, match="reserved keyword"):
+        pack.loads("nan = 5; 5")
+
+    with pytest.raises(ValueError, match="Cannot rebind a variable"):
+        pack.loads("x = 6; x = 5; 5")
+
+    with pytest.raises(
+        ValueError, match="Cannot import after declaring variables"
+    ):
+        pack.loads("x = 6; import math; 5")
+
+    with pytest.raises(
+        ValueError, match="Cannot redefine a name already used by an import"
+    ):
+        pack.loads("import math; math = 5; 5")
+
+    with pytest.raises(ValueError, match="Only bindings"):
+        pack.loads("assert False; 5")
+
+    assert pack.loads("import i.donot.exist; 5") == 5
+    assert pack.loads("import i.donot.exist, a, a.b, c; 5") == 5
+    assert pack.loads("import i.donot.exist; 5") == 5
+    assert pack.loads("a: int = 5; 5") == 5
+
+
+def test_loads_exec_refs():
+
+    with pytest.raises(ValueError, match="Unbound variable"):
+        pack.loads("[a, a]")
+    with pytest.raises(ValueError, match="Unbound variable"):
+        pack.loads("import a.b.c; [a, a]")
+    with pytest.raises(ValueError, match="reference an imported module"):
+        pack.loads("import a; [a, a]")
+
+    assert pack.loads("a = 5; [a, a]") == [5, 5]
+    assert explode_exec("a = [1, 2]; b = [a, a]; [b, a]") == [
+        [[1, 2], pack.tree.Reference(offset=3)],
+        pack.tree.Reference(offset=1),
+    ]
+
+    with pytest.raises(ValueError, match="circular reference"):
+        pack.loads("a = [a, a]; a") == ""
+
+    with pytest.raises(ValueError, match="isn't defined yet"):
+        pack.loads("a = [b, b]; b = 5; a")
+
+    assert pack.loads("b = 5; a = [b, b];  a") == [5, 5]
 
 
 def double(v):

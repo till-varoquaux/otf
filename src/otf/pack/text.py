@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 import enum
 import heapq
 import inspect
@@ -203,7 +204,7 @@ def _get_import(path: str) -> str | None | Exception:
 
 class ModulePrinter(Prettyfier):
 
-    INFINITY: ClassVar[pretty.Doc] = pretty.text('float("infinity")')
+    INFINITY: ClassVar[pretty.Doc] = pretty.text('float("inf")')
     NAN: ClassVar[pretty.Doc] = pretty.text('float("nan")')
 
     decls: list[tuple[int, pretty.Doc]]
@@ -315,18 +316,41 @@ class ModulePrinter(Prettyfier):
         return pretty.hgrp(prelude + doc + NULL_BREAK)
 
 
-def reduce_ast_expr(expr: ast.expr, orig: str, acc: base.Accumulator[T]) -> T:
+@dataclasses.dataclass(slots=True)
+class EnvBinding:
+    expr: ast.expr
+    # this number increases as the ref are defined in the
+    # environment. This is used to check that we visit the refs in
+    # a subset of the order in which they are defined in the source
+    # document.
+    src_idx: int
+    dst_idx: int | None = None
+
+
+ENV_ELEMENT = ast.alias | EnvBinding
+
+
+def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
     constant = acc.constant
     reference = acc.reference
     sequence = acc.sequence
     mapping = acc.mapping
     custom = acc.custom
+    cnt = -1
+
+    env: dict[str, ast.Import | EnvBinding] = {}
+
+    # This value is used along with the src_idx on the EnvBinding to make sure
+    # we don't have cycles or binding defined in the wrong order.
+    visiting_ref = len(module.body)
 
     def reduce(expr: ast.expr) -> T:
         # We need a smattering of `type: ignore` statements because version
         # 0.942 of mypy.
         #
         # Resolve in: https://github.com/python/mypy/pull/12321
+        nonlocal cnt
+        cnt += 1
         match expr:
             # Primitives
             case ast.Constant(value) | ast.UnaryOp(  # type: ignore[misc]
@@ -338,16 +362,64 @@ def reduce_ast_expr(expr: ast.expr, orig: str, acc: base.Accumulator[T]) -> T:
                 ast.Constant(float(num) | int(num)),
             ):
                 return constant(-num)
-            case ast.Name("nan"):  # type: ignore[misc]
+            case (
+                ast.Name("nan")  # type: ignore[misc]
+                | ast.Call(  # type: ignore[misc]
+                    ast.Name("float"), [ast.Constant("nan")]
+                )
+            ):
                 return constant(math.nan)
             case (
                 ast.Name("inf")  # type: ignore[misc]
-                | ast.UnaryOp(ast.UAdd(), ast.Name("inf"))  # type: ignore[misc]
+                | ast.Call(  # type: ignore[misc]
+                    ast.Name("float"), [ast.Constant("inf")]
+                )
+                | ast.UnaryOp(  # type: ignore[misc]
+                    ast.UAdd(),
+                    ast.Name("inf")
+                    | ast.Call(ast.Name("float"), [ast.Constant("inf")]),
+                )
             ):
                 return constant(math.inf)
-            case ast.UnaryOp(ast.USub(), ast.Name("inf")):  # type: ignore[misc]
+            case ast.UnaryOp(  # type: ignore[misc]
+                ast.USub(),
+                ast.Name("inf")
+                | ast.Call(ast.Name("float"), [ast.Constant("inf")]),
+            ):
                 return constant(-math.inf)
             # /Primitives
+            case (ast.Name(ref_name)):  # type: ignore[misc]
+                bound = env.get(ref_name, None)
+                if not isinstance(bound, EnvBinding):
+                    if isinstance(bound, ast.alias) and bound.name == ref_name:
+                        error(
+                            expr,
+                            f"{ref_name!r}: cannot reference an imported "
+                            "module",
+                        )
+                    assert isinstance(bound, ast.alias | None)
+                    error(expr, f"Unbound variable {ref_name!r}")
+                previous_dst_idx = bound.dst_idx
+                bound.dst_idx = cnt
+                nonlocal visiting_ref
+                current_src_idx = visiting_ref
+                if current_src_idx == bound.src_idx:
+                    error(expr, f"circular reference for {ref_name!r}")
+                if current_src_idx < bound.src_idx:
+                    error(
+                        expr,
+                        "referencing value that isn't defined yet: "
+                        f"{ref_name!r}",
+                    )
+                if previous_dst_idx is None:
+                    # Decrease this to inline the source document
+                    cnt -= 1
+                    visiting_ref = bound.src_idx
+                    res = reduce(bound.expr)
+                    visiting_ref = current_src_idx
+                else:
+                    res = reference(cnt - previous_dst_idx)
+                return res
             case ast.List(l):  # type: ignore[misc]
                 return sequence((reduce(x) for x in l))
             case ast.Dict(k, v):  # type: ignore[misc]
@@ -375,12 +447,78 @@ def reduce_ast_expr(expr: ast.expr, orig: str, acc: base.Accumulator[T]) -> T:
     def _custom_arg(arg: Any) -> Iterator[T]:
         yield reduce(arg)
 
-    def error(node: ast.expr) -> typing.NoReturn:
+    def error(
+        node: ast.AST, message: str = "Malformed node or string"
+    ) -> typing.NoReturn:
         ast_utils.raise_at(
-            ValueError("Malformed node or string"),
+            ValueError(message),
             node=node,
             content=orig,
         )
+
+    match module.body:
+        case *head, ast.Expr(expr):  # type: ignore[misc]
+            pass
+        case *_, last:
+            error(
+                last,
+                "The last node of the document should be a python expression",
+            )
+        case _:
+            raise ValueError("Empty document")
+
+    has_assigns = False
+    for stmt in head:
+        match stmt:
+            case ast.Import(aliases):
+                if has_assigns:
+                    error(stmt, "Cannot import after declaring variables")
+                for alias in aliases:
+                    if alias.asname is not None:
+                        error(alias, "`import ... as` are not supported")
+                    root_name = alias.name.split(".", 1)[0]
+                    if root_name not in env:
+                        env[root_name] = alias
+            case ast.Assign(
+                targets=[ast.Name(name)], value=value
+            ) | ast.AnnAssign(target=ast.Name(name), value=ast.expr() as value):
+                has_assigns = True
+                if name in ("ref", "nan", "inf"):
+                    error(stmt, f"{name!r} is a reserved keyword")
+                previous = env.get(name, None)
+                if isinstance(previous, ast.alias):
+                    error(
+                        stmt,
+                        "Cannot redefine a name already used by an import.",
+                    )
+                elif previous is not None:
+                    assert isinstance(previous, EnvBinding)
+                    error(
+                        stmt,
+                        "Cannot rebind a variable.",
+                    )
+                env[name] = EnvBinding(value, src_idx=len(env))
+
+            case ast.Assign(targets=[_]):
+                error(
+                    stmt, "Only assigning to top level variables is supported"
+                )
+
+            case ast.Assign(targets=_):
+                error(stmt, "Assigning to multiple targets is not supported")
+            case ast.ImportFrom():
+                error(stmt, "`from ... import` are not supported.")
+            case ast.Expr():
+                error(
+                    stmt,
+                    "Expressions are only allowed as the last statement of a "
+                    "document",
+                )
+            case _:
+                error(
+                    stmt,
+                    "Only bindings and imports are supported in the prelude",
+                )
 
     return acc.root(reduce(expr))
 
@@ -470,9 +608,8 @@ def dumps(
 # TODO: allow taking in a typing.TextIO and use its name (if it has one)
 def reduce(s: str, acc: base.Accumulator[T]) -> T:
     """TODO: Document me please"""
-    e = ast.parse(s, mode="eval")
-    assert isinstance(e, ast.Expression), type(e)
-    return reduce_ast_expr(e.body, orig=s, acc=acc)
+    module = ast.parse(s, mode="exec")
+    return reduce_module(module, orig=s, acc=acc)
 
 
 def loads(s: str) -> Any:
