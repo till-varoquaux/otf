@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import ast
 import copyreg
+import dataclasses
 import io
 import linecache
 import math
 import pickle
 import pickletools
 import sys
+from typing import Any
 
 import pytest
 
@@ -68,6 +70,21 @@ def unedit(s: str):
 
 def explode_exec(text):
     return pack.text.reduce(text, pack.tree.NodeBuilder())
+
+
+@dataclasses.dataclass
+class Sig:
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+@pack.register
+def _Sig(a: Sig):
+    return Sig, a.args, a.kwargs
 
 
 def roundtrip(v):
@@ -143,6 +160,7 @@ def test_dumps():
         pack.dumps((4, -5.0, float("nan"), float("inf"), -float("inf")))
         == "tuple([4, -5.0, nan, inf, -inf])"
     )
+    assert pack.dumps(Sig(1, 2, x=None)) == "tests.test_pack.Sig(1, 2, x=None)"
     tuples = [(x, x + 1) for x in range(5)]
     succ = {x: y for x, y in zip(tuples[:-1], tuples[1:])}
     # assert succ == {}
@@ -179,15 +197,15 @@ def test_get_import_pb(monkeypatch):
 # make sure all the transformations between format do not change the size of a
 # tree.
 def test_load_exec_float():
-    assert explode_exec("float(5)") == pack.tree.Custom(
-        constructor="float", value=5
-    )
+    assert explode_exec("float(5)") == pack.tree.Custom("float", 5)
     for pos_inf in ("float('inf')", "+float('inf')", "inf", "+inf"):
         assert explode_exec(pos_inf) == float("inf")
     for neg_inf in ("-float('inf')", "-float('inf')", "-inf"):
         assert explode_exec(neg_inf) == -float("inf")
     for nan in ("nan", "float('nan')"):
         assert math.isnan(explode_exec(nan))
+    with pytest.raises(TypeError):
+        assert pack.loads("float('nan', a=5)")
 
 
 def test_dump_exec():
@@ -358,6 +376,16 @@ def test_loads():
     with pytest.raises(ValueError):
         pack.loads("a['a'](5)")
 
+    with pytest.raises(ValueError):
+        pack.loads("list(**kwargs)")
+
+    assert (
+        pack.loads("complex(5, 2)")
+        == pack.loads("complex(5, imag=2)")
+        == pack.loads("complex(real=5, imag=2)")
+        == complex(5, 2)
+    )
+
 
 def test_simple():
     with pytest.raises(TypeError):
@@ -413,6 +441,10 @@ def test_weird_floats(x):
     roundtrip({x: x})
 
 
+def test_sig():
+    roundtrip(Sig(1, 2, 3, x="x", y="y"))
+
+
 def test_hash_cons_str():
     # copy.copy will actually do nothing. We want to get a new copy of the same
     # string.
@@ -439,7 +471,7 @@ def test_reccursive():
 def test_tuple():
     v = 1, 2
     assert pack.tree.explode(v) == pack.tree.Custom("tuple", [1, 2])
-    assert pack.base.shallow_reduce(v) == [1, 2]
+    assert pack.base.shallow_reduce(v) == (([1, 2],), {})
     assert pack.tree.implode(pack.tree.Custom("tuple", [1, 2])) == (1, 2)
 
 
@@ -481,7 +513,7 @@ def test_register_pickle():
 
     @pack.register(pickle=True)
     def reduce_item_getter(i: ItemGetter):
-        return ItemGetter, i._item
+        return ItemGetter, (i._item,), {}
 
     v2 = pickle.loads(pickle.dumps(v))
 
@@ -490,6 +522,20 @@ def test_register_pickle():
     # Inheritance doesn't work
     with pytest.raises(Exception, match="Can't pickle"):
         pickle.dumps(ItemGetter2(2))
+
+
+def test_register_pickle2():
+    v = ItemGetter(2)
+    with pytest.raises(Exception, match="Can't pickle"):
+        pickle.dumps(v)
+
+    @pack.register(pickle=True)
+    def reduce_item_getter(i: ItemGetter):
+        return ItemGetter, (), {"item": i._item}
+
+    v2 = pickle.loads(pickle.dumps(v))
+
+    assert v2([0, 1, 2, 3, 4]) == 2
 
 
 class IdGetter:
@@ -509,7 +555,7 @@ def test_register_random_holder():
 
     @pack.register(pickle=True)
     def reduce_random_getter(i: IdGetter):
-        return id_getter, i.value
+        return id_getter, (i.value,), {}
 
     reconstructed = pickle.loads(pickle.dumps(rg))
     reconstructed2 = pack.copy(rg)

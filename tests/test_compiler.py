@@ -178,7 +178,7 @@ def test_explode_function():
             "environment": {
                 "add": pack.tree.Custom(
                     "otf.Function",
-                    value={
+                    {
                         "name": "add",
                         "signature": ["x", "y"],
                         "body": "        return x + y",

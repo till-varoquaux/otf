@@ -124,14 +124,18 @@ class Simple(base.Accumulator[pretty.Doc]):
         return pretty.text(f"ref({offset:_d})")
 
     def custom(
-        self, constructor: str, value: Iterator[pretty.Doc]
+        self,
+        constructor: str,
+        shape: base.ArgShape,
+        values: Iterator[pretty.Doc],
     ) -> pretty.Doc:
-        (arg,) = value
-        return pretty.agrp(
-            pretty.text(f"{constructor}(")
-            + pretty.nest(self.indent, NULL_BREAK + arg)
-            + NULL_BREAK
-            + pretty.text(")")
+        return self.format_list(
+            (
+                value if name is None else pretty.text(f"{name}=") + value
+                for name, value in shape.label(values)
+            ),
+            opar=f"{constructor}(",
+            cpar=")",
         )
 
 
@@ -266,11 +270,14 @@ class ModulePrinter(Prettyfier):
         return alias
 
     def custom(
-        self, constructor: str, value: Iterator[pretty.Doc]
+        self,
+        constructor: str,
+        shape: base.ArgShape,
+        values: Iterator[pretty.Doc],
     ) -> pretty.Doc:
         if self.imports is not None and constructor not in self.imports:
             self.imports[constructor] = _get_import(constructor)
-        return self.box(super().custom, constructor, value)
+        return self.box(super().custom, constructor, shape=shape, values=values)
 
     def root(self, doc: pretty.Doc) -> pretty.Doc:
         prelude = pretty.EMPTY
@@ -365,26 +372,26 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
             case (
                 ast.Name("nan")  # type: ignore[misc]
                 | ast.Call(  # type: ignore[misc]
-                    ast.Name("float"), [ast.Constant("nan")]
+                    ast.Name("float"), [ast.Constant("nan")], []
                 )
             ):
                 return constant(math.nan)
             case (
                 ast.Name("inf")  # type: ignore[misc]
                 | ast.Call(  # type: ignore[misc]
-                    ast.Name("float"), [ast.Constant("inf")]
+                    ast.Name("float"), [ast.Constant("inf")], []
                 )
                 | ast.UnaryOp(  # type: ignore[misc]
                     ast.UAdd(),
                     ast.Name("inf")
-                    | ast.Call(ast.Name("float"), [ast.Constant("inf")]),
+                    | ast.Call(ast.Name("float"), [ast.Constant("inf")], []),
                 )
             ):
                 return constant(math.inf)
             case ast.UnaryOp(  # type: ignore[misc]
                 ast.USub(),
                 ast.Name("inf")
-                | ast.Call(ast.Name("float"), [ast.Constant("inf")]),
+                | ast.Call(ast.Name("float"), [ast.Constant("inf")], []),
             ):
                 return constant(-math.inf)
             # /Primitives
@@ -425,10 +432,11 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
             case ast.Dict(k, v):  # type: ignore[misc]
                 return mapping(_gen_kv(zip(k, v)))
             case ast.Call(  # type: ignore[misc]
-                ast.Name("ref"), [ast.Constant(int(offset))]
+                ast.Name("ref"), [ast.Constant(int(offset))], []
             ):
                 return reference(offset)
-            case ast.Call(constructor, [arg]):  # type: ignore[misc]
+            # TODO: handle keywords
+            case ast.Call(constructor, args, kwargs):  # type: ignore[misc]
                 path = []
                 while True:
                     match constructor:
@@ -439,13 +447,22 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
                             path.append(elt)
                         case _:
                             error(constructor)
-                return custom(".".join(reversed(path)), _custom_arg(arg))
+                values = args[:]
+                kwnames = []
+                for keyword in kwargs:
+                    if keyword.arg is None:
+                        error(keyword)
+                    values.append(keyword.value)
+                    kwnames.append(keyword.arg)
+                shape = base.ArgShape(len(args), tuple(kwnames))
+                return custom(
+                    ".".join(reversed(path)),
+                    shape=shape,
+                    values=(reduce(value) for value in values),
+                )
         error(expr)
 
     _gen_kv = base._mk_kv_reducer(reduce)
-
-    def _custom_arg(arg: Any) -> Iterator[T]:
-        yield reduce(arg)
 
     def error(
         node: ast.AST, message: str = "Malformed node or string"

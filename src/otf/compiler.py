@@ -163,10 +163,9 @@ class Function(Generic[P, T]):
 
 
 @pack.register(pickle=True)
-def _explode_function(
-    value: Function[P, T]
-) -> tuple[Any, parser.ExplodedFunction]:
-    return Function, pack.base.shallow_reduce(value._origin)
+def _explode_function(value: Function[P, T]) -> pack.base.Reduced[Any]:
+    args, kwargs = pack.base.shallow_reduce(value._origin)
+    return Function, args, kwargs
 
 
 class ExplodedClosure(TypedDict, total=True):
@@ -217,12 +216,17 @@ def closure(exploded: ExplodedClosure) -> Closure[Any, Any]:
 
 
 @pack.register(pickle=True)
-def _explode_closure(c: Closure[P, T]) -> tuple[Any, ExplodedClosure]:
+def _explode_closure(
+    c: Closure[P, T]
+) -> tuple[Any, tuple[ExplodedClosure], dict[str, Any]]:
+    # TODO: fixme
+    args, kwargs = pack.base.shallow_reduce(c.environment)
+    (env,) = args
     exploded: ExplodedClosure = {
-        "environment": pack.base.shallow_reduce(c.environment),
+        "environment": env,
         "target": c.target,
     }
-    return closure, exploded
+    return closure, (exploded,), {}
 
 
 class TemplateHole(ast.AST):
@@ -1041,7 +1045,7 @@ def suspension(exploded: ExplodedSuspension) -> Suspension:
 @pack.register(pickle=True)
 def _explode_suspension(
     arg: Suspension,
-) -> tuple[Any, ExplodedSuspension]:
+) -> tuple[Any, tuple[ExplodedSuspension], dict[str, Any]]:
     exploded: ExplodedSuspension = {
         "environment": arg.workflow.environment,
         "variables": arg.variables,
@@ -1049,7 +1053,7 @@ def _explode_suspension(
         "code": arg.code,
         "position": arg.position,
     }
-    return suspension, exploded
+    return suspension, (exploded,), {}
 
 
 def _otf_suspend(
@@ -1147,7 +1151,7 @@ class Environment(collections.UserDict[str, Any]):
 @pack.register(pickle=True)
 def _explode_environment(
     environment: Environment,
-) -> tuple[Any, dict[str, Any]]:
+) -> tuple[Any, tuple[dict[str, Any]], dict[str, Any]]:
     builtins = _get_builtins()
     res = {k: v for k, v in environment.data.items() if k not in builtins}
-    return Environment, res
+    return Environment, (res,), {}

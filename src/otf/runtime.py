@@ -123,8 +123,8 @@ union
 
 
 @pack.register(pickle=True)
-def _explode_namedref(namedref: NamedReference[Any]) -> tuple[Any, str]:
-    return NamedReference, namedref._name
+def _explode_namedref(namedref: NamedReference[Any]) -> pack.base.Reduced[Any]:
+    return NamedReference, (namedref._name,), {}
 
 
 class _ExplodedTask(TypedDict, total=True):
@@ -182,7 +182,9 @@ def task(exploded: ExplodedTask) -> Task[Any]:
 @pack.register
 def _explode_task(
     t: Task[Any],
-) -> tuple[Callable[[ExplodedTask], Task[Any]], ExplodedTask]:
+) -> tuple[
+    Callable[[ExplodedTask], Task[Any]], tuple[ExplodedTask], dict[str, Any]
+]:
     res: ExplodedTask = {"function": t.function}
     if t.args != []:
         res["args"] = t.args
@@ -190,4 +192,4 @@ def _explode_task(
     if t.kwargs != {}:
         res["kwargs"] = t.kwargs
 
-    return task, res
+    return task, (res,), {}

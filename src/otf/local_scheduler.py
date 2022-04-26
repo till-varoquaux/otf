@@ -57,8 +57,12 @@ def future(exploded: ExplodedFuture) -> Future[Any]:
 @pack.register
 def _explode_future(
     fut: Future[Any],
-) -> tuple[Callable[[ExplodedFuture], Future[Any]], ExplodedFuture]:
-    return future, {"uid": fut.uid, "task": fut.task}
+) -> tuple[
+    Callable[[ExplodedFuture], Future[Any]],
+    tuple[ExplodedFuture],
+    dict[str, Any],
+]:
+    return future, ({"uid": fut.uid, "task": fut.task},), {}
 
 
 @dataclasses.dataclass

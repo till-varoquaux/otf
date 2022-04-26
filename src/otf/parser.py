@@ -370,12 +370,20 @@ def _implode_function(exploded: ExplodedFunction) -> Function[Any, Any]:
 
 
 @pack.register(pickle=True)
-def _explode_function(fn: Function[Any, Any]) -> tuple[Any, ExplodedFunction]:
-    return _implode_function, {
-        "name": fn.name,
-        "signature": _explode_signature(fn.signature),
-        "body": fn.body,
-    }
+def _explode_function(
+    fn: Function[Any, Any]
+) -> tuple[Any, tuple[ExplodedFunction], dict[str, Any]]:
+    return (
+        _implode_function,
+        (
+            {
+                "name": fn.name,
+                "signature": _explode_signature(fn.signature),
+                "body": fn.body,
+            },
+        ),
+        {},
+    )
 
 
 class _DotDotDot:

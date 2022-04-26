@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import copyreg
+import dataclasses
 import functools
 import inspect
 import types
@@ -15,6 +16,7 @@ from typing import (
     Iterator,
     ParamSpec,
     Type,
+    TypeAlias,
     TypeVar,
 )
 
@@ -25,16 +27,16 @@ T = TypeVar("T")
 T_Co = TypeVar("T_Co", covariant=True)
 V = TypeVar("V")
 
-CustomImplodeFn = Callable[[Any], T]
+CustomImplodeFn: TypeAlias = Callable[..., T]
+
+Reduced: TypeAlias = tuple[Callable[..., T], tuple[Any, ...], dict[str, Any]]
+
+Reducer: TypeAlias = Callable[[T], Reduced[T]]
 
 
 @functools.lru_cache()
 def _get_named_imploder(name: str) -> CustomImplodeFn[Any]:
     return typing.cast(CustomImplodeFn[Any], utils.locate(name))
-
-
-Reduced = tuple[Callable[[Any], T], Any]
-Reducer = Callable[[T], Reduced[T]]
 
 
 DISPATCH_TABLE = weakref.WeakKeyDictionary[Type[Any], Reducer[Any]]()
@@ -44,7 +46,7 @@ def _infer_reducer_type(f: Reducer[T]) -> Type[T]:
     values = list(inspect.signature(f, eval_str=True).parameters.values())
     if len(values) != 1:
         raise ValueError(
-            "The registered function should take only one argument."
+            "The registered function should take only one argument"
         )
     [arg] = values
     ty: Type[T] | None = arg.annotation
@@ -53,6 +55,14 @@ def _infer_reducer_type(f: Reducer[T]) -> Type[T]:
         ty = origin
     assert ty is not None
     return ty
+
+
+def pickle_call(
+    fn: Callable[..., T], args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> T:
+    "Function that serves as a trampoline to pass kwargs"
+    # Pickle's reduce only allows to use *args on the callback.
+    return fn(*args, **kwargs)
 
 
 @typing.overload
@@ -89,21 +99,17 @@ def register(
     Here are three equivalent ways to add support for the :class:`complex`
     type::
 
-        >>> def mk_complex(l):
-        ...    real, imag = l
-        ...    return complex(real, imag)
-
         >>> @register
         ... def _reduce_complex(c: complex):
-        ...   return mk_complex, [c.real, c.imag]
+        ...   return complex, (c.real, c.imag)
 
         >>> @register()
         ... def _reduce_complex(c: complex):
-        ...   return mk_complex, [c.real, c.imag]
+        ...   return complex, (c.real, c.imag)
 
         >>> @register(type=complex)
         ... def _reduce_complex(c: complex):
-        ...   return mk_complex, [c.real, c.imag]
+        ...   return complex, (c.real, c.imag)
 
     Args:
 
@@ -121,10 +127,14 @@ def register(
         if pickle:
 
             @functools.wraps(function)
-            def reduce(v: T) -> tuple[Callable[[V], T], tuple[V]]:
-                imploder, arg = function(v)
-                return imploder, (arg,)
+            def reduce(v: T) -> tuple[Callable[..., T], tuple[Any, ...]]:
+                imploder, args, kwargs = function(v)
+                if kwargs == {}:
+                    return imploder, args
+                return pickle_call, (imploder, args, kwargs)
 
+            # TODO: figure out whether this is a mypy issue or a problem on our
+            # end
             copyreg.pickle(cls, reduce)  # type: ignore[arg-type]
         DISPATCH_TABLE[cls] = function
         return function
@@ -136,7 +146,7 @@ def register(
 
 @register
 def _explode_tuple(t: tuple[T, ...]) -> Reduced[tuple[T, ...]]:
-    return tuple, list(t)
+    return tuple, (list(t),), {}
 
 
 MISSING = object()
@@ -152,11 +162,41 @@ def _get_custom(ty: Type[T]) -> Reducer[T]:
     return reducer
 
 
-def shallow_reduce(v: Any) -> Any:
+def shallow_reduce(v: Any) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """Pull apart a custom type"""
     reducer = _get_custom(type(v))
-    _fn, res = reducer(v)
-    return res
+    _fn, args, kwargs = reducer(v)
+    return args, kwargs
+
+
+@dataclasses.dataclass
+class ArgShape:
+    """The types of arguments taken by a function
+
+
+    >>> a =  ArgShape(5, ('a', 'b'))
+    >>> list(a.label(range(7)))
+    [(None, 0), (None, 1), (None, 2), (None, 3), (None, 4), ('a', 5), ('b', 6)]
+    >>> a.group(list(range(7)))
+    ([0, 1, 2, 3, 4], {'a': 5, 'b': 6})
+    """
+
+    nargs: int  #: number of anonymous arguments
+    kwnames: tuple[str, ...] = ()  #: name of the keyword arguments
+
+    def _iter_keys(self) -> Iterator[str | None]:
+        for i in range(self.nargs):
+            yield None
+        yield from self.kwnames
+
+    def label(self, values: Iterable[T]) -> Iterator[tuple[str | None, T]]:
+        yield from zip(self._iter_keys(), values, strict=True)
+
+    def group(self, values: Iterable[T]) -> tuple[list[T], dict[str, T]]:
+        it = iter(values)
+        args = [next(it) for _ in range(self.nargs)]
+        kwargs = {k: v for k, v in zip(self.kwnames, it, strict=True)}
+        return args, kwargs
 
 
 class Accumulator(Generic[T], abc.ABC):
@@ -185,7 +225,7 @@ class Accumulator(Generic[T], abc.ABC):
     # constructor)
     @abc.abstractmethod
     def custom(
-        self, constructor: str, value: Iterator[T]
+        self, constructor: str, shape: ArgShape, values: Iterator[T]
     ) -> T:  # pragma: no cover
         ...
 
@@ -221,10 +261,15 @@ def reduce(obj: Any, acc: Accumulator[T], string_hashcon_length: int = 32) -> T:
     mapping = acc.mapping
     custom = acc.custom
 
-    def _custom_arg(arg: Any) -> Iterator[T]:
+    def _reduce_arg_values(
+        args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Iterator[T]:
         # Avoid the `id` being reused by other transient values
-        transient.append(arg)
-        yield reduce(arg)
+        for it in (args, kwargs.values()):
+            for arg in it:
+                if not isinstance(arg, int | float | None | bool | bytes | str):
+                    transient.append(arg)
+                yield reduce(arg)
 
     def reduce(v: Any) -> T:
         nonlocal cnt
@@ -258,8 +303,13 @@ def reduce(obj: Any, acc: Accumulator[T], string_hashcon_length: int = 32) -> T:
             res = mapping(_gen_kv(v.items()))
         else:
             deconstructor = _get_custom(ty)
-            fn, arg = deconstructor(v)
-            res = custom(utils.get_locate_name(fn), _custom_arg(arg))
+            fn, args, kwargs = deconstructor(v)
+            # TODO: fix me
+            res = custom(
+                utils.get_locate_name(fn),
+                shape=ArgShape(len(args), tuple(kwargs)),
+                values=_reduce_arg_values(args, kwargs),
+            )
         memo[addr] = current
         return res
 
@@ -290,9 +340,11 @@ class RuntimeValueBuilder(Accumulator[Any]):
         self.memo.append(res)
         return res
 
-    def _custom(self, constructor: str, value: Iterator[Any]) -> Any:
-        (arg,) = value
-        return _get_named_imploder(constructor)(arg)
+    def _custom(
+        self, constructor: str, shape: ArgShape, values: Iterator[Any]
+    ) -> Any:
+        args, kwargs = shape.group(values)
+        return _get_named_imploder(constructor)(*args, **kwargs)
 
     def _reduce(
         self, fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
@@ -303,8 +355,10 @@ class RuntimeValueBuilder(Accumulator[Any]):
         self.memo[current] = res
         return res
 
-    def custom(self, constructor: str, value: Iterator[Any]) -> Any:
-        return self._reduce(self._custom, constructor, value)
+    def custom(
+        self, constructor: str, shape: ArgShape, values: Iterator[Any]
+    ) -> Any:
+        return self._reduce(self._custom, constructor, shape, values)
 
     def sequence(self, items: Iterable[T]) -> Any:
         return self._reduce(_mk_list, items)

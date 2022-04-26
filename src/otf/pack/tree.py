@@ -13,13 +13,13 @@ when it's reduced::
 
   >>> v = (1, 2)
   >>> explode([(1, 2)])
-  [Custom(constructor='tuple', value=[1, 2])]
+  [Custom(constructor='tuple', args=([1, 2],), kwargs={})]
 
 You can also leverage this module to check other reducers::
 
   >>> import otf.pack.text
   >>> otf.pack.text.reduce("{4: I.do_not.exist(1)}", NodeBuilder())
-  {4: Custom(constructor='I.do_not.exist', value=1)}
+  {4: Custom(constructor='I.do_not.exist', args=(1,), kwargs={})}
 
 
 API:
@@ -76,7 +76,17 @@ class Custom:
     """
 
     constructor: str
-    value: Node
+    args: tuple[Node, ...]
+    kwargs: dict[str, Node]
+
+    def __init__(self, constructor: str, *args: Node, **kwargs: Node) -> None:
+        object.__setattr__(self, "constructor", constructor)
+        object.__setattr__(self, "args", args)
+        object.__setattr__(self, "kwargs", kwargs)
+
+    def nodes(self) -> Iterator[Node]:
+        yield from self.args
+        yield from self.kwargs.values()
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -91,8 +101,12 @@ class Mapping:
     When the reduced value cannot be safely represented as a dictionary (because
     some keys are not hashable) we use a :class:`Mapping` :
 
-        >>> explode({(): "empty"})
-        Mapping(data=[(Custom(constructor='tuple', value=[]), 'empty')])
+        >>> from pprint import pp
+        >>> pp(explode({(): "empty"}), width=60)
+        Mapping(data=[(Custom(constructor='tuple',
+                              args=([],),
+                              kwargs={}),
+                       'empty')])
 
     Note that the mapping cannot implement the :class:`collections.Mapping`
     interface because it might contain duplicate keys:
@@ -100,11 +114,15 @@ class Mapping:
         >>> v1 = (1,)
         >>> v2 = (2,)
         >>> e = explode({1: v1, v1: v2, v2: 2})
-        >>> from pprint import pp
         >>> pp(e, width=60)
-        Mapping(data=[(1, Custom(constructor='tuple', value=[1])),
+        Mapping(data=[(1,
+                       Custom(constructor='tuple',
+                              args=([1],),
+                              kwargs={})),
                       (Reference(offset=3),
-                       Custom(constructor='tuple', value=[2])),
+                       Custom(constructor='tuple',
+                              args=([2],),
+                              kwargs={})),
                       (Reference(offset=3), 2)])
 
     Parameters:
@@ -165,9 +183,11 @@ class NodeBuilder(base.Accumulator[Node]):
     def reference(self, offset: int) -> Node:
         return Reference(offset)
 
-    def custom(self, constructor: str, value: Iterator[Node]) -> Node:
-        (arg,) = value
-        return Custom(constructor, arg)
+    def custom(
+        self, constructor: str, shape: base.ArgShape, values: Iterator[Node]
+    ) -> Node:
+        args, kwargs = shape.group(values)
+        return Custom(constructor, *args, **kwargs)
 
 
 def reduce(value: Node, acc: base.Accumulator[T]) -> T:
@@ -187,7 +207,12 @@ def reduce(value: Node, acc: base.Accumulator[T]) -> T:
         elif isinstance(exp, Reference):
             return reference(exp.offset)
         elif isinstance(exp, Custom):
-            return custom(exp.constructor, _custom_arg(exp.value))
+            shape = base.ArgShape(len(exp.args), tuple(exp.kwargs))
+            return custom(
+                exp.constructor,
+                shape=shape,
+                values=(reduce(arg) for arg in exp.nodes()),
+            )
         else:
             raise TypeError(
                 f"Object of type {type(exp).__name__} cannot be de-serialised "
@@ -195,9 +220,6 @@ def reduce(value: Node, acc: base.Accumulator[T]) -> T:
             )
 
     _gen_kv = base._mk_kv_reducer(reduce)
-
-    def _custom_arg(arg: Any) -> Iterator[T]:
-        yield reduce(arg)
 
     return acc.root(reduce(value))
 
