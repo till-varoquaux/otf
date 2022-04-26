@@ -58,7 +58,11 @@ class Doc:
         return DocCons(self, other)
 
     def to_string(self, width: int = 80) -> str:
-        """Render this document to a string"""
+        """Render this document to a string
+
+        args:
+          width(int):
+        """
         return to_string(width, self)
 
 
@@ -359,8 +363,27 @@ def format(w: int, k: int, elts: LL | None) -> SDoc:
     assert False  # pragma: no cover
 
 
-def to_string(width: int, doc: Doc) -> str:
-    sdoc = format(width, 0, LL(0, Mode.FLAT, DocGroup(Mode.AUTO, doc)))
+def single_line(doc: Doc) -> str:
     out = io.StringIO()
+    docs = [doc]
+    while docs:
+        match docs.pop():
+            case DocText(s) | DocBREAK(s):
+                out.write(s)
+            case DocCons(left=l, right=r):
+                docs.append(r)
+                docs.append(l)
+            case DocGroup(Mode.BREAK, _):
+                raise ValueError("hgrp not supported in single_line")
+            case DocNest(_, d) | DocGroup(_, d):
+                docs.append(d)
+            case d:
+                assert isinstance(d, DocNil)
+    return out.getvalue()
+
+
+def to_string(width: int, doc: Doc) -> str:
+    out = io.StringIO()
+    sdoc = format(width, 0, LL(0, Mode.FLAT, DocGroup(Mode.AUTO, doc)))
     render_sdoc(sdoc, out)
     return out.getvalue()

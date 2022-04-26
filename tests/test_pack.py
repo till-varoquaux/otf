@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from otf import ast_utils, decorators, pack
+from otf import ast_utils, decorators, pack, pretty
 
 from . import utils
 
@@ -71,9 +71,9 @@ def roundtrip(v):
     v2 = pack.tree.implode(exploded)
     indented = pack.dumps(v, indent=4)
     flat = pack.dumps(v)
-    flat2 = pack.tree.reduce(exploded, pack.text.Stringifier())
+    flat2 = pack.tree.reduce(exploded, pack.text.Simple(4))
 
-    assert flat == ast.unparse(flat2)
+    assert flat == pretty.single_line(flat2)
     utils.assert_eq_ast(flat, indented)
     v3 = pack.loads(flat)
     v4 = unedit(pack.dumps(v, format=pack.EXECUTABLE))

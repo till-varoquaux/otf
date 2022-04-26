@@ -3,6 +3,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+import pytest
+
 from otf import pretty
 
 NULL_BREAK = pretty.break_with("")
@@ -76,7 +78,8 @@ ADD = """\
 
 
 def test_nested():
-    assert pp(list(range(3))) == "[0, 1, 2]"
+    ldoc = mk_doc([0, 1, 2])
+    assert ldoc.to_string(20) == pretty.single_line(ldoc) == "[0, 1, 2]"
     assert pp(Add(1, 2)) == "1 + 2"
     assert pp([*range(10)]) == L10
     assert pp([1232341234145345634643657, Add(1, 2)]) == ADD
@@ -100,6 +103,8 @@ def test_groups():
     a = pretty.agrp(doc)
     f = pretty.fgrp(doc)
     assert v.to_string(10) == v.to_string(100) == QUICK_BROWN_FOX
+    with pytest.raises(ValueError):
+        pretty.single_line(h)
     assert h.to_string(10) == h.to_string(100) == as_lines
     assert a.to_string(10) == as_lines
     assert a.to_string(100) == QUICK_BROWN_FOX

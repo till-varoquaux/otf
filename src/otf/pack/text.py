@@ -35,7 +35,7 @@ __all__ = (
     "dumps",
     "loads",
     "reduce",
-    "Stringifier",
+    "Simple",
     "Prettyfier",
     "ModulePrinter",
     "Format",
@@ -60,65 +60,17 @@ PRETTY: Final = Format.PRETTY
 EXECUTABLE: Final = Format.EXECUTABLE
 
 
-class Stringifier(base.Accumulator[ast.expr]):
-    "Convert a value into an ast fragment"
-
-    def constant(
-        self, constant: int | float | None | str | bytes | bool
-    ) -> ast.expr:
-        if not isinstance(constant, float) or math.isfinite(constant):
-            return ast_utils.constant(constant)
-        if math.isnan(constant):
-            return ast_utils.name("nan")
-        if constant == math.inf:
-            return ast_utils.name("inf")
-        assert constant == -math.inf
-        return ast_utils.neg(ast_utils.name("inf"))
-
-    def mapping(self, items: Iterator[tuple[ast.expr, ast.expr]]) -> ast.expr:
-        keys = []
-        values = []
-        for k, v in items:
-            keys.append(k)
-            values.append(v)
-        return ast.Dict(
-            keys=keys,
-            values=values,
-            lineno=0,
-            col_offset=0,
-            end_lineno=0,
-            end_col_offset=0,
-        )
-
-    def sequence(self, items: Iterator[ast.expr]) -> ast.expr:
-        return ast.List(
-            elts=list(items),
-            ctx=ast.Load(),
-            lineno=0,
-            col_offset=0,
-            end_lineno=0,
-            end_col_offset=0,
-        )
-
-    def reference(self, offset: int) -> ast.expr:
-        return ast_utils.call(ast_utils.name("ref"), ast_utils.constant(offset))
-
-    def custom(self, constructor: str, value: Iterator[ast.expr]) -> ast.expr:
-        (arg,) = value
-        return ast_utils.call(ast_utils.dotted_path(constructor), arg)
-
-
 COL_SEP = pretty.text(",") + pretty.BREAK
 NULL_BREAK = pretty.break_with("")
 
 
-class Prettyfier(base.Accumulator[pretty.Doc]):
-    "Convert a value into an ast fragment"
+class Simple(base.Accumulator[pretty.Doc]):
+    "Serialize a value as a human readable text."
 
     NAN: ClassVar[pretty.Doc] = pretty.text("nan")
     INFINITY: ClassVar[pretty.Doc] = pretty.text("inf")
 
-    def __init__(self, indent: int) -> None:
+    def __init__(self, indent: int = 4) -> None:
         self.indent = indent
 
     def format_list(
@@ -126,8 +78,9 @@ class Prettyfier(base.Accumulator[pretty.Doc]):
         docs: Iterable[pretty.Doc],
         *,
         sep: pretty.Doc = COL_SEP,
-        opar: str,
-        cpar: str,
+        opar: str = "(",
+        cpar: str = ")",
+        gmode: pretty.Mode = pretty.Mode.AUTO,
     ) -> pretty.Doc:
         acc = NULL_BREAK
         first = True
@@ -140,27 +93,13 @@ class Prettyfier(base.Accumulator[pretty.Doc]):
         if first:
             return pretty.text(opar + cpar)
         body = pretty.nest(self.indent, acc) + NULL_BREAK
-        return pretty.agrp(pretty.text(opar) + body + pretty.text(cpar))
+        return pretty.DocGroup(
+            gmode, pretty.text(opar) + body + pretty.text(cpar)
+        )
 
     def constant(
         self, constant: int | float | None | str | bytes | bool
     ) -> pretty.Doc:
-        if isinstance(constant, int):
-            return pretty.text(f"{constant:_d}")
-        if (
-            isinstance(constant, str)
-            and len(constant) > 40
-            and "\n" in constant
-        ):
-            return self.format_list(
-                (
-                    pretty.text(repr(line))
-                    for line in constant.splitlines(keepends=True)
-                ),
-                sep=pretty.BREAK,
-                opar="(",
-                cpar=")",
-            )
         if isinstance(constant, float) and not math.isfinite(constant):
             if math.isnan(constant):
                 return self.NAN
@@ -168,7 +107,6 @@ class Prettyfier(base.Accumulator[pretty.Doc]):
                 return self.INFINITY
             assert constant == -math.inf
             return pretty.text("-") + self.INFINITY
-        assert isinstance(constant, float | bytes | str | None | bool)
         return pretty.text(repr(constant))
 
     def mapping(
@@ -194,6 +132,30 @@ class Prettyfier(base.Accumulator[pretty.Doc]):
             + NULL_BREAK
             + pretty.text(")")
         )
+
+
+class Prettyfier(Simple):
+    "Convert a value into a multiline document"
+
+    def constant(
+        self, constant: int | float | None | str | bytes | bool
+    ) -> pretty.Doc:
+        if isinstance(constant, int):
+            return pretty.text(f"{constant:_d}")
+        if (
+            isinstance(constant, str)
+            and len(constant) > 60
+            and "\n" in constant
+        ):
+            return self.format_list(
+                (
+                    pretty.text(repr(line))
+                    for line in constant.splitlines(keepends=True)
+                ),
+                sep=pretty.BREAK,
+                gmode=pretty.Mode.BREAK,
+            )
+        return super().constant(constant)
 
 
 class Boxed(pretty.DocCons):
@@ -489,7 +451,9 @@ def dumps(
     if format is None:
         format = Format.COMPACT if indent is None else Format.PRETTY
     if format == Format.COMPACT:
-        return ast.unparse(base.reduce(obj, Stringifier()))
+        reducer = Simple()
+        doc = base.reduce(obj, reducer)
+        return pretty.single_line(doc)
     if indent is None:
         indent = 4
     assert indent >= 0
