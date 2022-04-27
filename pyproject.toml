@@ -20,22 +20,26 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.10"
 
+msgpack = {version = "^1.0.2", optional = true}
+
 # Everything is wide open here because we depend on the lock file to make sure
 # we're good.
 [tool.poetry.dev-dependencies]
-mypy = "*"
-flake8 = "*"
-isort = "*"
-black = {extras = ["jupyter"], version = "*"}
-pytest-cov = "*"
 Sphinx = "*"
-pygments = "*"
-types-docutils = "*"
-jupyter = "*"
-furo = "*"
-types-Pygments = "*"
+black = {extras = ["jupyter"], version = "*"}
 codespell = "*"
+flake8 = "*"
+furo = "*"
+isort = "*"
+jupyter = "*"
+msgpack-types = "*"
+mypy = "*"
+pytest-cov = "*"
+types-Pygments = "*"
+types-docutils = "*"
 
+[tool.poetry.extras]
+msgpack = ["msgpack"]
 
 [tool.black]
 line-length = 80
