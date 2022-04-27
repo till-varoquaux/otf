@@ -3,6 +3,7 @@ name = "otf"
 version = "0.1.0-alpha.5"
 description = "A python framework for on-the-fly distributed workflows"
 authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
+exclude = [".*"]
 license = "CC0-1.0"
 readme = "README.rst"
 repository = "https://github.com/till-varoquaux/otf"

@@ -31,6 +31,7 @@ from . import base
 
 P = ParamSpec("P")
 T = TypeVar("T")
+V = TypeVar("V")
 
 __all__ = (
     "dumps",
@@ -65,11 +66,12 @@ COL_SEP = pretty.text(",") + pretty.BREAK
 NULL_BREAK = pretty.break_with("")
 
 
-class Simple(base.Accumulator[pretty.Doc]):
+class Simple(base.Accumulator[pretty.Doc, str]):
     "Serialize a value as a human readable text."
 
     NAN: ClassVar[pretty.Doc] = pretty.text("nan")
     INFINITY: ClassVar[pretty.Doc] = pretty.text("inf")
+    indent: int
 
     def __init__(self, indent: int = 4) -> None:
         self.indent = indent
@@ -138,9 +140,17 @@ class Simple(base.Accumulator[pretty.Doc]):
             cpar=")",
         )
 
+    def root(self, doc: pretty.Doc) -> str:
+        return pretty.single_line(doc)
+
 
 class Prettyfier(Simple):
     "Convert a value into a multiline document"
+    width: int
+
+    def __init__(self, indent: int = 4, width: int = 80) -> None:
+        super().__init__(indent=indent)
+        self.width = width
 
     def constant(
         self, constant: int | float | None | str | bytes | bool
@@ -161,6 +171,11 @@ class Prettyfier(Simple):
                 gmode=pretty.Mode.BREAK,
             )
         return super().constant(constant)
+
+    def root(self, doc: pretty.Doc) -> str:
+        res = doc.to_string(self.width)
+        assert isinstance(res, str)
+        return res
 
 
 class Boxed(pretty.DocCons):
@@ -218,10 +233,11 @@ class ModulePrinter(Prettyfier):
 
     def __init__(
         self,
-        indent: int,
+        indent: int = 4,
+        width: int = 80,
         add_imports: bool = True,
     ) -> None:
-        super().__init__(indent=indent)
+        super().__init__(indent=indent, width=width)
         self.targets = {}
         self.decls = []
         self.imports = {} if add_imports else None
@@ -279,7 +295,7 @@ class ModulePrinter(Prettyfier):
             self.imports[constructor] = _get_import(constructor)
         return self.box(super().custom, constructor, shape=shape, values=values)
 
-    def root(self, doc: pretty.Doc) -> pretty.Doc:
+    def root(self, doc: pretty.Doc) -> str:
         prelude = pretty.EMPTY
 
         import_errors: list[tuple[str, Exception]] = []
@@ -320,7 +336,7 @@ class ModulePrinter(Prettyfier):
         while self.decls:
             _, decl = heapq.heappop(self.decls)
             prelude += decl + NULL_BREAK + NULL_BREAK
-        return pretty.hgrp(prelude + doc + NULL_BREAK)
+        return super().root(pretty.hgrp(prelude + doc + NULL_BREAK))
 
 
 @dataclasses.dataclass(slots=True)
@@ -336,8 +352,12 @@ class EnvBinding:
 
 ENV_ELEMENT = ast.alias | EnvBinding
 
+ARITY1 = base.ArgShape(1, ())
 
-def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
+
+def reduce_module(
+    module: ast.Module, orig: str, acc: base.Accumulator[T, V]
+) -> V:
     constant = acc.constant
     reference = acc.reference
     sequence = acc.sequence
@@ -350,6 +370,10 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
     # This value is used along with the src_idx on the EnvBinding to make sure
     # we don't have cycles or binding defined in the wrong order.
     visiting_ref = len(module.body)
+
+    def seq_arg(elts: Iterable[ast.expr]) -> Iterator[T]:
+        """Generate the argument for the set and tuple custom block"""
+        yield sequence(reduce(e) for e in elts)
 
     def reduce(expr: ast.expr) -> T:
         nonlocal cnt
@@ -423,6 +447,10 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
                 return sequence((reduce(x) for x in l))
             case ast.Dict(k, v):
                 return mapping(_dict_fields(k, v))
+            case ast.Set(elts):
+                return custom("set", ARITY1, seq_arg(elts))
+            case ast.Tuple(elts):
+                return custom("tuple", ARITY1, seq_arg(elts))
             case ast.Call(ast.Name("ref"), [ast.Constant(int(offset))], []):
                 return reference(offset)
             case ast.Call(constructor, args, kwargs):
@@ -449,9 +477,9 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
                     shape=shape,
                     values=(reduce(value) for value in values),
                 )
-        error(expr)
-        # mypy 0.950 seems to choke up on the 'typing.NoReturn'
-        assert False  # pragma: no cover
+        error(
+            expr, f"Don't know how to reduce: {utils.cram(ast.dump(expr), 60)}"
+        )
 
     def _dict_fields(
         keys: Iterable[ast.expr | None], values: Iterable[ast.expr]
@@ -605,25 +633,23 @@ def dumps(
     if format is None:
         format = Format.COMPACT if indent is None else Format.PRETTY
     if format == Format.COMPACT:
-        reducer = Simple()
-        doc = base.reduce(obj, reducer)
-        return pretty.single_line(doc)
+        return base.reduce(obj, Simple())
     if indent is None:
         indent = 4
     assert indent >= 0
     assert width > indent
     if format == Format.PRETTY:
-        reducer = Prettyfier(indent=indent)
-    else:
-        assert format == Format.EXECUTABLE, format
-        reducer = ModulePrinter(indent=indent, add_imports=True)
-    doc = base.reduce(obj, reducer)
-    return doc.to_string(width)
+        return base.reduce(obj, Prettyfier(indent=indent, width=width))
+    assert format == Format.EXECUTABLE, format
+    return base.reduce(
+        obj, ModulePrinter(indent=indent, width=width, add_imports=True)
+    )
 
 
 # TODO: allow taking in a typing.TextIO and use its name (if it has one)
-def reduce(s: str, acc: base.Accumulator[T]) -> T:
+def reduce(s: str, acc: base.Accumulator[T, V]) -> V:
     """TODO: Document me please"""
+    assert isinstance(s, str), s
     module = ast.parse(s, mode="exec")
     return reduce_module(module, orig=s, acc=acc)
 

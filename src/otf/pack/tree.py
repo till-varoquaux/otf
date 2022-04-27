@@ -35,6 +35,7 @@ from typing import Any, Iterator, TypeVar
 from otf.pack import base
 
 T = TypeVar("T")
+V = TypeVar("V")
 
 __all__ = (
     "Node",
@@ -160,7 +161,7 @@ Node = (
 )
 
 
-class NodeBuilder(base.Accumulator[Node]):
+class NodeBuilder(base.Accumulator[Node, Node]):
     """A :class:`base.Accumulator` used to build :class:`Node`"""
 
     def constant(
@@ -190,8 +191,11 @@ class NodeBuilder(base.Accumulator[Node]):
         args, kwargs = shape.group(values)
         return Custom(constructor, *args, **kwargs)
 
+    def root(self, node: Node) -> Node:
+        return node
 
-def reduce(value: Node, acc: base.Accumulator[T]) -> T:
+
+def reduce(value: Node, acc: base.Accumulator[T, V]) -> V:
     constant = acc.constant
     reference = acc.reference
     sequence = acc.sequence

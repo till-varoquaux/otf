@@ -968,7 +968,7 @@ class Workflow(Generic[P, T]):
         "Create a suspension of this workflow on the first line"
         bound = self.origin.signature.bind(*args, **kwargs)
         bound.apply_defaults()
-        return Suspension(
+        return Suspension._make(
             position=0,
             variables=bound.arguments,
             awaiting=None,
@@ -979,10 +979,11 @@ class Workflow(Generic[P, T]):
 class ExplodedSuspension(TypedDict, total=True):
     """A serializable representation of a Suspension"""
 
+    code: str
     position: int
-    environment: Environment
     variables: dict[str, Any]
     awaiting: Any
+    environment: Environment
 
 
 @dataclasses.dataclass
@@ -999,6 +1000,44 @@ class Suspension:
     awaiting: Any
     workflow: Workflow[Any, Any]
 
+    def __init__(
+        self,
+        code: str,
+        *,
+        position: int,
+        environment: Environment,
+        variables: dict[str, Any],
+        awaiting: Any,
+    ) -> None:
+        self.position = position
+        self.variables = variables
+        self.awaiting = awaiting
+        function = parser._gen_function(
+            name="workflow",
+            body=code,
+            signature=inspect.Signature(),
+        )
+        self.workflow = Workflow[Any, Any](
+            environment=environment, origin=function
+        )
+
+    @staticmethod
+    def _make(
+        position: int,
+        variables: dict[str, Any],
+        awaiting: Any,
+        workflow: Workflow[Any, Any],
+    ) -> Suspension:
+        # We want the default constructor to be the one used by the
+        # serialisation code (to make dumps pretty).
+        # _make is a constructor that should only be used internally.
+        res = Suspension.__new__(Suspension)
+        res.position = position
+        res.variables = variables
+        res.awaiting = awaiting
+        res.workflow = workflow
+        return res
+
     def resume(self, value: Any) -> Any:
         return self.workflow._resume(
             position=self.position, variables=self.variables, value=value
@@ -1007,6 +1046,10 @@ class Suspension:
     @property
     def code(self) -> str:
         return self.workflow.origin.body
+
+    @property
+    def environment(self) -> Environment:
+        return self.workflow.environment
 
     @property
     def lineno(self) -> int | None:
@@ -1020,45 +1063,24 @@ class Suspension:
         return point.lineno - self.workflow.origin.lineno + 1
 
 
-def suspension(
-    code: str,
-    *,
-    position: int,
-    environment: Environment,
-    variables: dict[str, Any],
-    awaiting: Any,
-) -> Suspension:
-    function = parser._gen_function(
-        name="workflow",
-        body=code,
-        signature=inspect.Signature(),
-    )
-    workflow = Workflow[Any, Any](environment=environment, origin=function)
-    return Suspension(
-        position=position,
-        variables=variables,
-        awaiting=awaiting,
-        workflow=workflow,
-    )
-
-
 @pack.register(pickle=True)
 def _explode_suspension(
-    arg: Suspension,
+    suspension: Suspension,
 ) -> pack.base.Reduced[Any]:
     exploded: ExplodedSuspension = {
-        "position": arg.position,
-        "environment": arg.workflow.environment,
-        "variables": arg.variables,
-        "awaiting": arg.awaiting,
+        "code": suspension.code,
+        "position": suspension.position,
+        "awaiting": suspension.awaiting,
+        "variables": suspension.variables,
+        "environment": suspension.environment,
     }
-    return suspension, (arg.code,), typing.cast(dict[str, Any], exploded)
+    return Suspension, (), typing.cast(dict[str, Any], exploded)
 
 
 def _otf_suspend(
     position: int, variables: dict[str, Any], awaiting: Any
 ) -> Suspension:
-    return Suspension(
+    return Suspension._make(
         position=position,
         variables={
             k: v for k, v in variables.items() if not k.startswith("_otf_")

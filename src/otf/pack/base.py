@@ -197,7 +197,7 @@ class ArgShape:
         return args, kwargs
 
 
-class Accumulator(Generic[T], abc.ABC):
+class Accumulator(Generic[T, V], abc.ABC):
     @abc.abstractmethod
     def constant(
         self, constant: int | float | None | str | bytes | bool
@@ -227,9 +227,9 @@ class Accumulator(Generic[T], abc.ABC):
     ) -> T:  # pragma: no cover
         ...
 
-    def root(self, value: T) -> T:
-        # wrap the root value
-        return value
+    @abc.abstractmethod
+    def root(self, value: T) -> V:  # pragma: no cover
+        ...
 
 
 def _mk_kv_reducer(
@@ -245,7 +245,9 @@ def _mk_kv_reducer(
     return res
 
 
-def reduce(obj: Any, acc: Accumulator[T], string_hashcon_length: int = 32) -> T:
+def reduce(
+    obj: Any, acc: Accumulator[T, V], string_hashcon_length: int = 32
+) -> V:
     cnt: int = -1
     # id -> position
     memo: dict[int, int | None] = {}
@@ -321,7 +323,7 @@ _mk_list: Callable[[Iterable[Any]], Any] = list
 _mk_dict: Callable[[Iterable[tuple[Any, Any]]], Any] = dict
 
 
-class RuntimeValueBuilder(Accumulator[Any]):
+class RuntimeValueBuilder(Accumulator[Any, Any]):
     memo: list[Any]
 
     def __init__(self) -> None:
@@ -363,6 +365,9 @@ class RuntimeValueBuilder(Accumulator[Any]):
 
     def mapping(self, items: Iterable[tuple[Any, Any]]) -> Any:
         return self._reduce(_mk_dict, items)
+
+    def root(self, obj: Any) -> Any:
+        return obj
 
 
 def copy(v: T) -> T:

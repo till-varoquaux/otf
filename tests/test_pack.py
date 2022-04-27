@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from otf import ast_utils, decorators, pack, pretty
+from otf import ast_utils, decorators, pack
 
 from . import utils
 
@@ -68,7 +68,7 @@ def unedit(s: str):
         del linecache.cache[filename]
 
 
-def explode_exec(text):
+def explode_exec(text) -> str:
     return pack.text.reduce(text, pack.tree.NodeBuilder())
 
 
@@ -100,7 +100,7 @@ def roundtrip(v):
     flat = pack.dumps(v)
     flat2 = pack.tree.reduce(exploded, pack.text.Simple(4))
 
-    assert flat == pretty.single_line(flat2)
+    assert flat == flat2
     utils.assert_eq_ast(flat, indented)
     v3 = pack.loads(flat)
     v4 = unedit(executable)
@@ -225,10 +225,9 @@ tuple([1, 2, 3])
 
 
 def _dump_exec_no_imports(obj):
-    doc = pack.base.reduce(
+    return pack.base.reduce(
         obj, pack.text.ModulePrinter(indent=4, add_imports=False)
     )
-    return doc.to_string(80)
 
 
 def test_dump_exec_bad_import(monkeypatch):
@@ -385,6 +384,23 @@ def test_loads():
         == pack.loads("complex(real=5, imag=2)")
         == complex(5, 2)
     )
+
+
+def test_loads_shorthands():
+    assert pack.loads("{}") == {}
+
+    assert pack.loads("{1: 1}") == {1: 1}
+
+    # Even though we don't output values in this format we might still see them
+    # in the input...
+
+    assert pack.loads("{1, 2, 3}") == {1, 2, 3}
+
+    assert pack.loads("(1, 2, 3)") == (1, 2, 3)
+
+    assert pack.loads("()") == ()
+
+    assert pack.loads("(1,)") == (1,)
 
 
 def test_simple():

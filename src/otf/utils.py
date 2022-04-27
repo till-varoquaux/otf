@@ -9,6 +9,7 @@ import typing
 from typing import Protocol, TypeVar
 
 locate = pydoc.locate
+cram = pydoc.cram
 
 
 @typing.runtime_checkable
