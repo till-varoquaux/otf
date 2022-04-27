@@ -20,7 +20,7 @@ class StringAnnotFinder(ast.NodeVisitor):
             return
         for sub_node in ast.walk(node):
             match sub_node:
-                case ast.Constant(str(_)):  # type: ignore[misc]
+                case ast.Constant(str(_)):
                     self.errors.append(
                         (
                             sub_node.lineno,

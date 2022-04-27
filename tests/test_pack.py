@@ -367,6 +367,9 @@ def test_loads():
 
     assert pack.loads(RANGE) == [1, 2, 3, 4, 5]
 
+    with pytest.raises(ValueError, match="Dictionary expansion"):
+        pack.loads("{1: 2, **a}")
+
     with pytest.raises(ValueError):
         pack.loads("[1, 2, 3, \n5+5\n]")
 

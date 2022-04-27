@@ -345,57 +345,49 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
     custom = acc.custom
     cnt = -1
 
-    env: dict[str, ast.Import | EnvBinding] = {}
+    env: dict[str, ENV_ELEMENT] = {}
 
     # This value is used along with the src_idx on the EnvBinding to make sure
     # we don't have cycles or binding defined in the wrong order.
     visiting_ref = len(module.body)
 
     def reduce(expr: ast.expr) -> T:
-        # We need a smattering of `type: ignore` statements because version
-        # 0.942 of mypy.
-        #
-        # Resolve in: https://github.com/python/mypy/pull/12321
         nonlocal cnt
         cnt += 1
         match expr:
             # Primitives
-            case ast.Constant(value) | ast.UnaryOp(  # type: ignore[misc]
+            case ast.Constant(value) | ast.UnaryOp(
                 ast.UAdd(), ast.Constant(float(value) | int(value))
             ):
                 return constant(value)
-            case ast.UnaryOp(  # type: ignore[misc]
+            case ast.UnaryOp(
                 ast.USub(),
                 ast.Constant(float(num) | int(num)),
             ):
                 return constant(-num)
             case (
-                ast.Name("nan")  # type: ignore[misc]
-                | ast.Call(  # type: ignore[misc]
-                    ast.Name("float"), [ast.Constant("nan")], []
-                )
+                ast.Name("nan")
+                | ast.Call(ast.Name("float"), [ast.Constant("nan")], [])
             ):
                 return constant(math.nan)
             case (
-                ast.Name("inf")  # type: ignore[misc]
-                | ast.Call(  # type: ignore[misc]
-                    ast.Name("float"), [ast.Constant("inf")], []
-                )
-                | ast.UnaryOp(  # type: ignore[misc]
+                ast.Name("inf")
+                | ast.Call(ast.Name("float"), [ast.Constant("inf")], [])
+                | ast.UnaryOp(
                     ast.UAdd(),
                     ast.Name("inf")
                     | ast.Call(ast.Name("float"), [ast.Constant("inf")], []),
                 )
             ):
                 return constant(math.inf)
-            case ast.UnaryOp(  # type: ignore[misc]
+            case ast.UnaryOp(
                 ast.USub(),
                 ast.Name("inf")
                 | ast.Call(ast.Name("float"), [ast.Constant("inf")], []),
             ):
                 return constant(-math.inf)
             # /Primitives
-            case (ast.Name(ref_name)):  # type: ignore[misc]
+            case (ast.Name(ref_name)):
                 bound = env.get(ref_name, None)
                 if not isinstance(bound, EnvBinding):
                     if isinstance(bound, ast.alias) and bound.name == ref_name:
@@ -427,16 +419,13 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
                 else:
                     res = reference(cnt - previous_dst_idx)
                 return res
-            case ast.List(l):  # type: ignore[misc]
+            case ast.List(l):
                 return sequence((reduce(x) for x in l))
-            case ast.Dict(k, v):  # type: ignore[misc]
-                return mapping(_gen_kv(zip(k, v)))
-            case ast.Call(  # type: ignore[misc]
-                ast.Name("ref"), [ast.Constant(int(offset))], []
-            ):
+            case ast.Dict(k, v):
+                return mapping(_dict_fields(k, v))
+            case ast.Call(ast.Name("ref"), [ast.Constant(int(offset))], []):
                 return reference(offset)
-            # TODO: handle keywords
-            case ast.Call(constructor, args, kwargs):  # type: ignore[misc]
+            case ast.Call(constructor, args, kwargs):
                 path = []
                 while True:
                     match constructor:
@@ -461,11 +450,21 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
                     values=(reduce(value) for value in values),
                 )
         error(expr)
+        # mypy 0.950 seems to choke up on the 'typing.NoReturn'
+        assert False  # pragma: no cover
 
-    _gen_kv = base._mk_kv_reducer(reduce)
+    def _dict_fields(
+        keys: Iterable[ast.expr | None], values: Iterable[ast.expr]
+    ) -> Iterator[tuple[T, T]]:
+        for key, value in zip(keys, values):
+            if key is None:
+                error(value, "Dictionary expansion not supported")
+            ek = reduce(key)
+            ev = reduce(value)
+            yield (ek, ev)
 
     def error(
-        node: ast.AST, message: str = "Malformed node or string"
+        node: ast.AST, message: str = "Malformed node"
     ) -> typing.NoReturn:
         ast_utils.raise_at(
             ValueError(message),
@@ -474,7 +473,7 @@ def reduce_module(module: ast.Module, orig: str, acc: base.Accumulator[T]) -> T:
         )
 
     match module.body:
-        case *head, ast.Expr(expr):  # type: ignore[misc]
+        case *head, ast.Expr(expr):
             pass
         case *_, last:
             error(

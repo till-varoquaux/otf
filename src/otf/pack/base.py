@@ -133,9 +133,7 @@ def register(
                     return imploder, args
                 return pickle_call, (imploder, args, kwargs)
 
-            # TODO: figure out whether this is a mypy issue or a problem on our
-            # end
-            copyreg.pickle(cls, reduce)  # type: ignore[arg-type]
+            copyreg.pickle(cls, reduce)
         DISPATCH_TABLE[cls] = function
         return function
 

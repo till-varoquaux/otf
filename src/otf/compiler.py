@@ -161,10 +161,7 @@ class Function(Generic[P, T]):
         return res
 
     def _compile(self, env: Environment) -> None:
-        # TODO: Figure out what makes mypy unhappy here
-        self._fun = _mk_runnable(
-            self._origin, env.data  # type: ignore[arg-type]
-        )
+        self._fun = _mk_runnable(self._origin, env.data)
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
         if self._fun is None:
@@ -712,7 +709,7 @@ class FsmCompiler(abc.ABC):
                 return self.emit_suspend(
                     target=target, value=value, origin=current
                 )
-            case ast.Expr(ast.Await(value=value)):  # type: ignore[misc]
+            case ast.Expr(ast.Await(value=value)):
                 return self.emit_suspend(
                     target=None, value=value, origin=current
                 )

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import functools
 import html
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
-import pygments  # type: ignore[import]
-import pygments.formatters  # type: ignore[import]
-import pygments.lexers  # type: ignore[import]
+import pygments
+import pygments.formatters
+import pygments.lexers
 
 
 @functools.lru_cache()
@@ -17,10 +17,10 @@ def get_highlight_style() -> str:
 
 
 class InlineHtmlFormatter(
-    pygments.formatters.HtmlFormatter  # type: ignore[misc]
+    pygments.formatters.HtmlFormatter  # type: ignore[type-arg]
 ):
     def wrap(
-        self, source: Iterable[tuple[int, str]], outfile: str
+        self, source: Iterable[tuple[int, str]], *args: Any, **kwargs: Any
     ) -> Iterator[tuple[int, str]]:
         yield 0, (
             f'<span class="{self.cssclass}" '

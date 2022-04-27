@@ -175,8 +175,7 @@ def fill_linecache(data: str) -> str:
         # An mtime == None means that this won't be purged by
         # linecache.checkcache
         mtime = None
-        # https://github.com/python/typeshed/pull/7623
-        linecache.cache[filename] = (  # type: ignore[assignment]
+        linecache.cache[filename] = (
             size,
             mtime,
             lines,

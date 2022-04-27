@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "otf"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 description = "A python framework for on-the-fly distributed workflows"
 authors = ["Till Varoquaux <till.varoquaux@gmail.com>"]
 license = "CC0-1.0"
@@ -20,16 +20,20 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.10"
 
+# Everything is wide open here because we depend on the lock file to make sure
+# we're good.
 [tool.poetry.dev-dependencies]
-mypy = "^0.942"
+mypy = "*"
 flake8 = "*"
 isort = "*"
-black = {extras = ["jupyter"], version = "^22.3.0"}
+black = {extras = ["jupyter"], version = "*"}
 pytest-cov = "*"
 Sphinx = "*"
-types-docutils = "^0.18.0"
-jupyter = "^1.0.0"
-furo = "^2022.4.7"
+pygments = "*"
+types-docutils = "*"
+jupyter = "*"
+furo = "*"
+types-Pygments = "*"
 
 
 [tool.black]
