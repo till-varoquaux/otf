@@ -48,21 +48,18 @@ class Future(Generic[T]):
         return f"{self.scheduler_id}:{self.local_id}"
 
 
-def future(exploded: ExplodedFuture) -> Future[Any]:
+def future(uid: str, task: runtime.Task[T]) -> Future[T]:
     """Function used by pack to recreate the futures..."""
-    scheduler_id, local_id = exploded["uid"].split(":")
-    return Future(scheduler_id, int(local_id), task=exploded["task"])
+    scheduler_id, local_id = uid.split(":")
+    return Future(scheduler_id, int(local_id), task=task)
 
 
 @pack.register
 def _explode_future(
     fut: Future[Any],
-) -> tuple[
-    Callable[[ExplodedFuture], Future[Any]],
-    tuple[ExplodedFuture],
-    dict[str, Any],
-]:
-    return future, ({"uid": fut.uid, "task": fut.task},), {}
+) -> tuple[Callable[..., Future[Any]], tuple[()], dict[str, Any]]:
+    kwargs = ExplodedFuture({"uid": fut.uid, "task": fut.task})
+    return future, (), typing.cast(dict[str, Any], kwargs)
 
 
 @dataclasses.dataclass

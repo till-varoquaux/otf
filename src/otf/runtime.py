@@ -16,7 +16,6 @@ T = TypeVar("T")
 __all__ = (
     "NamedReference",
     "Task",
-    "task",
 )
 
 # For the docstring
@@ -141,8 +140,8 @@ class Task(Generic[T]):
     """A deferred function application"""
 
     function: Callable[..., T]
-    args: list[Any]
-    kwargs: dict[str, Any]
+    args: list[Any] = dataclasses.field(default_factory=list)
+    kwargs: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def run(self) -> T:
         return self.function(*self.args, **self.kwargs)
@@ -171,20 +170,10 @@ class Task(Generic[T]):
         return Task(function=function, args=[*args], kwargs=dict(**kwargs))
 
 
-def task(exploded: ExplodedTask) -> Task[Any]:
-    return Task(
-        function=exploded["function"],
-        args=exploded.get("args", []),
-        kwargs=exploded.get("kwargs", {}),
-    )
-
-
 @pack.register
 def _explode_task(
     t: Task[Any],
-) -> tuple[
-    Callable[[ExplodedTask], Task[Any]], tuple[ExplodedTask], dict[str, Any]
-]:
+) -> pack.base.Reduced[Any]:
     res: ExplodedTask = {"function": t.function}
     if t.args != []:
         res["args"] = t.args
@@ -192,4 +181,4 @@ def _explode_task(
     if t.kwargs != {}:
         res["kwargs"] = t.kwargs
 
-    return task, (res,), {}
+    return Task, (), typing.cast(dict[str, Any], res)

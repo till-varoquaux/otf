@@ -231,11 +231,9 @@ def test_explode_function():
 
     exploded = pack.tree.Custom(
         "otf.parser._implode_function",
-        {
-            "body": "        return a + b",
-            "name": "f",
-            "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
-        },
+        name="f",
+        signature={"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
+        body="        return a + b",
     )
     assert explode(f) == exploded
     reconstituted = pack.tree.implode(exploded)
@@ -254,11 +252,9 @@ def test_explode_function2():
 
     exploded = pack.tree.Custom(
         "otf.parser._implode_function",
-        {
-            "body": "                 ...: return a + b",
-            "name": "f",
-            "signature": {"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
-        },
+        name="f",
+        signature={"args": ["a", "*", "b"], "kwdefaults": {"b": 5}},
+        body="                 ...: return a + b",
     )
     assert explode(f) == exploded
     reconstituted = pack.tree.implode(exploded)

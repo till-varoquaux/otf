@@ -141,13 +141,24 @@ class Function(Generic[P, T]):
     _origin: parser.Function[P, T]
 
     def __init__(
-        self, origin: parser.Function[P, T] | parser.ExplodedFunction
+        self,
+        name: str,
+        signature: parser.ExplodedSignature,
+        body: str,
     ) -> None:
         self._fun = None
-        if isinstance(origin, parser.Function):
-            self._origin = origin
-        else:
-            self._origin = parser._implode_function(origin)
+        self._origin = parser._implode_function(
+            name=name, body=body, signature=signature
+        )
+
+    @classmethod
+    def from_parser_function(
+        cls, origin: parser.Function[P, T]
+    ) -> Function[P, T]:
+        res = cls.__new__(cls)
+        res._fun = None
+        res._origin = origin
+        return res
 
     def _compile(self, env: Environment) -> None:
         # TODO: Figure out what makes mypy unhappy here
@@ -171,7 +182,7 @@ def _explode_function(value: Function[P, T]) -> pack.base.Reduced[Any]:
 class ExplodedClosure(TypedDict, total=True):
     """A serializable representation of a Closure"""
 
-    environment: dict[str, Any]
+    environment: Environment
     # TODO: Change to a generic TypeDict when we move to python 3.11
     # https://bugs.python.org/issue44863
     target: Function[Any, Any]
@@ -208,25 +219,13 @@ class Closure(Generic[P, T]):
         return f"<{self!s} at {hex(id(self))}>"
 
 
-def closure(exploded: ExplodedClosure) -> Closure[Any, Any]:
-    return Closure(
-        environment=Environment(exploded["environment"]),
-        target=exploded["target"],
-    )
-
-
 @pack.register(pickle=True)
-def _explode_closure(
-    c: Closure[P, T]
-) -> tuple[Any, tuple[ExplodedClosure], dict[str, Any]]:
-    # TODO: fixme
-    args, kwargs = pack.base.shallow_reduce(c.environment)
-    (env,) = args
+def _explode_closure(c: Closure[P, T]) -> pack.base.Reduced[Any]:
     exploded: ExplodedClosure = {
-        "environment": env,
+        "environment": c.environment,
         "target": c.target,
     }
-    return closure, (exploded,), {}
+    return Closure, (), typing.cast(dict[str, Any], exploded)
 
 
 class TemplateHole(ast.AST):
@@ -983,11 +982,10 @@ class Workflow(Generic[P, T]):
 class ExplodedSuspension(TypedDict, total=True):
     """A serializable representation of a Suspension"""
 
+    position: int
     environment: Environment
     variables: dict[str, Any]
     awaiting: Any
-    code: str
-    position: int
 
 
 @dataclasses.dataclass
@@ -1025,19 +1023,24 @@ class Suspension:
         return point.lineno - self.workflow.origin.lineno + 1
 
 
-def suspension(exploded: ExplodedSuspension) -> Suspension:
+def suspension(
+    code: str,
+    *,
+    position: int,
+    environment: Environment,
+    variables: dict[str, Any],
+    awaiting: Any,
+) -> Suspension:
     function = parser._gen_function(
         name="workflow",
-        body=exploded["code"],
+        body=code,
         signature=inspect.Signature(),
     )
-    workflow = Workflow[Any, Any](
-        environment=exploded["environment"], origin=function
-    )
+    workflow = Workflow[Any, Any](environment=environment, origin=function)
     return Suspension(
-        position=exploded["position"],
-        variables=exploded["variables"],
-        awaiting=exploded["awaiting"],
+        position=position,
+        variables=variables,
+        awaiting=awaiting,
         workflow=workflow,
     )
 
@@ -1045,15 +1048,14 @@ def suspension(exploded: ExplodedSuspension) -> Suspension:
 @pack.register(pickle=True)
 def _explode_suspension(
     arg: Suspension,
-) -> tuple[Any, tuple[ExplodedSuspension], dict[str, Any]]:
+) -> pack.base.Reduced[Any]:
     exploded: ExplodedSuspension = {
+        "position": arg.position,
         "environment": arg.workflow.environment,
         "variables": arg.variables,
         "awaiting": arg.awaiting,
-        "code": arg.code,
-        "position": arg.position,
     }
-    return suspension, (exploded,), {}
+    return suspension, (arg.code,), typing.cast(dict[str, Any], exploded)
 
 
 def _otf_suspend(
@@ -1081,16 +1083,11 @@ def _get_builtins() -> Mapping[str, Any]:
     return types.MappingProxyType(env)
 
 
-EMPTY_MAPPING: Mapping[str, Any] = types.MappingProxyType({})
-
-
 class Environment(collections.UserDict[str, Any]):
     """An otf environment contains functions and values."""
 
-    def __init__(
-        self, arg: Mapping[str, Any] = EMPTY_MAPPING, /, **kwargs: Any
-    ) -> None:
-        super().__init__(dict(_get_builtins()), **arg, **kwargs)
+    def __init__(self, /, **kwargs: Any) -> None:
+        super().__init__(dict(_get_builtins()), **kwargs)
 
     @typing.overload
     def function(
@@ -1125,7 +1122,7 @@ class Environment(collections.UserDict[str, Any]):
 
         def bind(fn: Callable[P, T]) -> Closure[P, T]:
             parsed = parser.Function[P, T].from_function(fn)
-            wrapped = Function[P, T](origin=parsed)
+            wrapped = Function[P, T].from_parser_function(origin=parsed)
             if not lazy:
                 wrapped._compile(self)
             self.data[parsed.name] = wrapped
@@ -1147,11 +1144,13 @@ class Environment(collections.UserDict[str, Any]):
         parsed = parser.Function[P, T].from_function(fn)
         return Workflow[P, T](environment=self, origin=parsed)
 
+    def _as_dict(self) -> dict[str, Any]:
+        builtins = _get_builtins()
+        return {k: v for k, v in self.data.items() if k not in builtins}
+
 
 @pack.register(pickle=True)
 def _explode_environment(
     environment: Environment,
-) -> tuple[Any, tuple[dict[str, Any]], dict[str, Any]]:
-    builtins = _get_builtins()
-    res = {k: v for k, v in environment.data.items() if k not in builtins}
-    return Environment, (res,), {}
+) -> tuple[Any, tuple[()], dict[str, Any]]:
+    return Environment, (), environment._as_dict()

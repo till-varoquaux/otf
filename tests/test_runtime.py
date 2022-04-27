@@ -59,18 +59,16 @@ def test_task():
         return x + y
 
     assert pack.base.shallow_reduce(runtime.Task.make(add)) == (
-        ({"function": add},),
-        {},
+        (),
+        {"function": add},
     )
     assert pack.base.shallow_reduce(runtime.Task.make(add, 5, y=6)) == (
-        (
-            {
-                "function": add,
-                "args": [5],
-                "kwargs": {"y": 6},
-            },
-        ),
-        {},
+        (),
+        {
+            "function": add,
+            "args": [5],
+            "kwargs": {"y": 6},
+        },
     )
 
     t2 = pack.copy(runtime.Task.make(add, 5, y=6))

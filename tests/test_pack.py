@@ -131,28 +131,22 @@ def ackerman(m, n):
     return ackerman(m - 1, ackerman(m, n - 1))
 
 
-PRETTY_ACK = """\
-otf.closure(
-    {
-        'environment': {
-            'ackerman': otf.Function(
-                {
-                    'name': 'ackerman',
-                    'signature': ['m', 'n'],
-                    'body': (
-                        '    if m == 0:\\n'
-                        '        return n + 1\\n'
-                        '    if n == 0:\\n'
-                        '        return ackerman(m - 1, 1)\\n'
-                        '    return ackerman(m - 1, ackerman(m, n - 1))'
-                    )
-                }
+PRETTY_ACK = r"""otf.Closure(
+    environment=otf.Environment(
+        ackerman=otf.Function(
+            name='ackerman',
+            signature=['m', 'n'],
+            body=(
+                '    if m == 0:\n'
+                '        return n + 1\n'
+                '    if n == 0:\n'
+                '        return ackerman(m - 1, 1)\n'
+                '    return ackerman(m - 1, ackerman(m, n - 1))'
             )
-        },
-        'target': ref(11)
-    }
-)\
-"""
+        )
+    ),
+    target=ref(6)
+)"""
 
 
 def test_dumps():
@@ -250,24 +244,27 @@ def test_dump_exec_bad_import(monkeypatch):
 EDITABLE_ACKERMAN = r"""import otf
 
 _0 = otf.Function(
-    {
-        'name': 'ackerman',
-        'signature': ['m', 'n'],
-        'body': (
-            '    if m == 0:\n'
-            '        return n + 1\n'
-            '    if n == 0:\n'
-            '        return ackerman(m - 1, 1)\n'
-            '    return ackerman(m - 1, ackerman(m, n - 1))'
-        )
-    }
+    name='ackerman',
+    signature=['m', 'n'],
+    body=(
+        '    if m == 0:\n'
+        '        return n + 1\n'
+        '    if n == 0:\n'
+        '        return ackerman(m - 1, 1)\n'
+        '    return ackerman(m - 1, ackerman(m, n - 1))'
+    )
 )
 
-otf.closure({'environment': {'ackerman': _0}, 'target': _0})
+otf.Closure(
+    environment=otf.Environment(ackerman=_0),
+    target=_0
+)
 """
 
 
 def test_dump_exec_acckerman():
+    with open("/tmp/t", "w") as fd:
+        fd.write(pack.dumps(ackerman, format=pack.EXECUTABLE))
     assert pack.dumps(ackerman, format=pack.EXECUTABLE) == EDITABLE_ACKERMAN
 
 

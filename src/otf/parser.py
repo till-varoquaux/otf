@@ -362,27 +362,28 @@ class Function(Generic[P, T]):
         )
 
 
-def _implode_function(exploded: ExplodedFunction) -> Function[Any, Any]:
-    signature = _implode_signature(exploded["signature"])
+def _implode_function(
+    name: str,
+    signature: ExplodedSignature,
+    body: str,
+) -> Function[Any, Any]:
     return _gen_function(
-        name=exploded["name"], body=exploded["body"], signature=signature
+        name=name, body=body, signature=_implode_signature(signature)
     )
 
 
 @pack.register(pickle=True)
 def _explode_function(
     fn: Function[Any, Any]
-) -> tuple[Any, tuple[ExplodedFunction], dict[str, Any]]:
+) -> tuple[Any, tuple[()], dict[str, Any]]:
     return (
         _implode_function,
-        (
-            {
-                "name": fn.name,
-                "signature": _explode_signature(fn.signature),
-                "body": fn.body,
-            },
-        ),
-        {},
+        (),
+        {
+            "name": fn.name,
+            "signature": _explode_signature(fn.signature),
+            "body": fn.body,
+        },
     )
 
 
