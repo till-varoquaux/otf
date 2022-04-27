@@ -19,7 +19,7 @@ __all__ = ("visit_node", "visit_function", "AstInfos")
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AstInfos:
-    """Informations collected from an AST"""
+    """Information collected from an AST"""
 
     awaits: tuple[ast.Await, ...] = ()
     bound_vars: Mapping[

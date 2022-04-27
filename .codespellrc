@@ -1,0 +1,4 @@
+[codespell]
+skip = .tox,.mypy_cache,_build*,.git,___pycache__
+# Used by pygments
+ignore-words-list = nd

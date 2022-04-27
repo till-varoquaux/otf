@@ -514,7 +514,7 @@ AssignTemplate = Template("__var_dest = _otf_val")
 
 
 class PublicState(WorkflowState):
-    """State that can be jumped to from outside the sate machines
+    """State that can be jumped to from outside the state machines
 
     These states are either the node or places where we resume from an ``await``
     statement.
@@ -966,11 +966,11 @@ class Workflow(Generic[P, T]):
 
     def freeze(self, *args: P.args, **kwargs: P.kwargs) -> Suspension:
         "Create a suspension of this workflow on the first line"
-        ba = self.origin.signature.bind(*args, **kwargs)
-        ba.apply_defaults()
+        bound = self.origin.signature.bind(*args, **kwargs)
+        bound.apply_defaults()
         return Suspension(
             position=0,
-            variables=ba.arguments,
+            variables=bound.arguments,
             awaiting=None,
             workflow=self,
         )

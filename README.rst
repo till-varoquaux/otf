@@ -4,7 +4,7 @@ On-the-fly distributed python workflows
 |PyPI| |PyPI - Python Version| |License: CC0-1.0| |Tests| |codecov|
 |Documentation Status| |binder|
 
-OTF is a framework to programatically write, run and debug workflows.
+OTF is a framework to programmatically write, run and debug workflows.
 
 Installing
 ----------

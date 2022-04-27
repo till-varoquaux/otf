@@ -133,7 +133,7 @@ def _arg_to_expr(
 def call(
     func: str | ast.expr, *args: ast.expr, anchor: Located = ANCHOR
 ) -> ast.expr:
-    """Smart constuctor for ast.Call"""
+    """Smart constructor for ast.Call"""
     return ast.Call(
         func=dotted_path(func, anchor=anchor)
         if isinstance(func, str)

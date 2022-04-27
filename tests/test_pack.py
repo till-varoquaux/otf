@@ -346,7 +346,7 @@ RANGE = """
   # Pluses
   +3,
   4,
-  # and Trailing commans
+  # and Trailing commas
   5,
 ]
 """

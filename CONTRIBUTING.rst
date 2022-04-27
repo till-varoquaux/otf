@@ -3,7 +3,7 @@ Testing
 
 We use `tox <https://tox.wiki/en/latest/>`__ and
 `poetry <https://python-poetry.org/>`__ to manage dependencies. You can
-run the tests from the project direcotry (on a machine where tox and
+run the tests from the project directory (on a machine where tox and
 python 3.10 are already installed) by calling:
 
 .. code:: bash

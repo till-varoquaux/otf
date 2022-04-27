@@ -8,8 +8,8 @@ intermediate representation of values. Having access to a simple representation
 makes it easier to write tests and debug application.
 
 
-This is the easiest way to programatically check what a python object looks like
-when it's reduced::
+This is the easiest way to programmatically check what a python object looks
+like when it's reduced::
 
   >>> v = (1, 2)
   >>> explode([(1, 2)])
@@ -24,6 +24,7 @@ You can also leverage this module to check other reducers::
 
 API:
 ----
+
 """
 
 from __future__ import annotations
