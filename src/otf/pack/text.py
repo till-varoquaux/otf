@@ -39,9 +39,9 @@ __all__ = (
     "dumps",
     "loads",
     "reduce",
-    "Simple",
-    "Prettyfier",
-    "ModulePrinter",
+    "CompactPrinter",
+    "PrettyPrinter",
+    "ExecutablePrinter",
     "Format",
 )
 
@@ -68,7 +68,7 @@ COL_SEP = pretty.text(",") + pretty.BREAK
 NULL_BREAK = pretty.break_with("")
 
 
-class Simple(base.Accumulator[pretty.Doc, str]):
+class CompactPrinter(base.Accumulator[pretty.Doc, str]):
     "Serialize a value as a human readable text."
 
     NAN: ClassVar[pretty.Doc] = pretty.text("nan")
@@ -152,7 +152,7 @@ class Simple(base.Accumulator[pretty.Doc, str]):
         return out.getvalue()
 
 
-class Prettyfier(Simple):
+class PrettyPrinter(CompactPrinter):
     "Convert a value into a multiline document"
     indent: int
     width: int
@@ -254,7 +254,7 @@ def _get_import(path: str) -> str | None | Exception:
         return e
 
 
-class ModulePrinter(Prettyfier):
+class ExecutablePrinter(PrettyPrinter):
 
     INFINITY: ClassVar[pretty.Doc] = pretty.text('float("inf")')
     NAN: ClassVar[pretty.Doc] = pretty.text('float("nan")')
@@ -389,9 +389,11 @@ class EnvBinding:
 ENV_ELEMENT = ast.alias | EnvBinding
 
 
-def reduce_module(
-    module: ast.Module, orig: str, acc: base.Accumulator[T, V]
-) -> V:
+# TODO: allow taking in a typing.TextIO and use its name (if it has one)
+def reduce(orig: str, acc: base.Accumulator[T, V]) -> V:
+    assert isinstance(orig, str), orig
+    module = ast.parse(orig, mode="exec")
+
     constant = acc.constant
     reference = acc.reference
     sequence = acc.sequence
@@ -601,6 +603,25 @@ def reduce_module(
     return acc.root(reduce(expr))
 
 
+def accumulator(
+    indent: int | None = None,
+    width: int = 60,
+    format: Format | None = None,
+) -> base.Accumulator[Any, str]:
+    if format is None:
+        format = Format.COMPACT if indent is None else Format.PRETTY
+    if format == Format.COMPACT:
+        return CompactPrinter()
+    if indent is None:
+        indent = 4
+    assert indent >= 0
+    assert width > indent
+    if format == Format.PRETTY:
+        return PrettyPrinter(indent=indent, width=width)
+    assert format == Format.EXECUTABLE, format
+    return ExecutablePrinter(indent=indent, width=width, add_imports=True)
+
+
 def dumps(
     obj: Any,
     indent: int | None = None,
@@ -610,7 +631,7 @@ def dumps(
     """Serialise *obj*
 
 
-    Dumps supports several formats. Let's take a sample value with shared
+    Dumps supports several formats. Let's take a sample value with a shared
     reference:
 
       >>> v = {'nan': math.nan, '1_5':[1,2,3,4,5]}
@@ -664,32 +685,15 @@ def dumps(
          *indent* wasn't specified and :const:`~otf.pack.PRETTY` otherwise.
 
     """
-    if format is None:
-        format = Format.COMPACT if indent is None else Format.PRETTY
-    if format == Format.COMPACT:
-        return base.reduce(obj, Simple())
-    if indent is None:
-        indent = 4
-    assert indent >= 0
-    assert width > indent
-    if format == Format.PRETTY:
-        return base.reduce(obj, Prettyfier(indent=indent, width=width))
-    assert format == Format.EXECUTABLE, format
     return base.reduce(
-        obj, ModulePrinter(indent=indent, width=width, add_imports=True)
+        obj, accumulator(indent=indent, width=width, format=format)
     )
-
-
-# TODO: allow taking in a typing.TextIO and use its name (if it has one)
-def reduce(s: str, acc: base.Accumulator[T, V]) -> V:
-    """TODO: Document me please"""
-    assert isinstance(s, str), s
-    module = ast.parse(s, mode="exec")
-    return reduce_module(module, orig=s, acc=acc)
 
 
 def loads(s: str) -> Any:
     """
+    Load a value encoded as a string
+
     Args:
       s (str):
     """

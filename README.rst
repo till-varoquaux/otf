@@ -6,17 +6,25 @@ On-the-fly distributed python workflows
 
 OTF is a framework to programmatically write, run and debug workflows.
 
+Notebooks:
+----------
+
+OTF is still in its infancy. We currently mostly rely on notebook to demonstrate
+how it works:
+
++ `Introduction <https://nbviewer.org/github/till-varoquaux/otf/blob/HEAD/docs/examples/introduction.ipynb>`_
++ `Serialisation <https://nbviewer.org/github/till-varoquaux/otf/blob/HEAD/docs/examples/serialisation.ipynb>`_
+
+
 Installing
 ----------
 
 OTF is currently in pre-alpha. If you really want to play with it you
-can install the latest build via:
+can check install the latest build via:
 
 .. code:: bash
 
    $ pip install -i https://test.pypi.org/simple/ otf
-
-`Contributing to this project <CONTRIBUTING.rst>`__
 
 .. |PyPI| image:: https://img.shields.io/pypi/v/otf.svg
    :target: https://pypi.org/project/otf/

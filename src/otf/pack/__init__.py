@@ -20,10 +20,8 @@ Out of the box, the types that are supported are:
 + :class:`list`: where all the elements are serialisable
 + :class:`dict`: where all the keys and values are serialisable
 + :class:`tuple`: where all the elements are serialisable
++ :class:`set`: where all the elements are serialisable
 + **shared references**: but not recursive values
-
-API:
-----
 
 """
 from __future__ import annotations
@@ -34,23 +32,23 @@ from .base import copy, register
 from .bin import dumpb, loadb
 from .text import Format, dumps, loads
 
-#:
+#: Print the value on one line
 COMPACT: Final = Format.COMPACT
 
-#:
+#: Pretty print the value
 PRETTY: Final = Format.PRETTY
 
-#:
+#: Print the value as python code where the last statement is the value.
 EXECUTABLE: Final = Format.EXECUTABLE
 
 __all__ = (
-    "dumps",
-    "loads",
-    "loadb",
-    "dumpb",
-    "copy",
-    "register",
     "COMPACT",
     "PRETTY",
     "EXECUTABLE",
+    "dumps",
+    "loads",
+    "dumpb",
+    "loadb",
+    "copy",
+    "register",
 )

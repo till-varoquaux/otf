@@ -1,4 +1,5 @@
 __pycache__/
+build/*
 docs/_build/
 docs/_build_doctest/
 .ipynb_checkpoints

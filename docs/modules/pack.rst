@@ -1,8 +1,249 @@
 ``otf.pack``: Serialisation library
 ===================================
 
+.. module:: otf.pack
+
+.. testsetup::
+
+   import otf
+
+
 .. automodule:: otf.pack
-  :members:
+
+API:
+----
+
+Text format
+^^^^^^^^^^^^
+
+.. autodata:: COMPACT
+
+.. autodata:: PRETTY
+
+.. autodata:: EXECUTABLE
+
+.. autofunction:: dumps
+
+.. autofunction:: loads
+
+Binary format
+^^^^^^^^^^^^^
+
+.. autofunction:: dumpb
+
+.. autofunction:: loadb
+
+Adding support for new types
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autofunction:: register
+
+
+..
+ Converting between formats
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ reduce_bin, reduce_text, ...
+
+Utility functions
+^^^^^^^^^^^^^^^^^
+
+.. autofunction:: copy
+
+
+
+Description of the binary format
+--------------------------------
+
+**OTF**'s binary format is valid `MessagePack <https://msgpack.org>`_:
+
+.. doctest::
+
+  >>> import msgpack
+  >>> packed = otf.pack.dumpb([None, {1: 1}, -0.])
+  >>> msgpack.unpackb(packed, strict_map_key=False)
+  [None, {1: 1}, -0.0]
+
+MessagePack allows for application specific `extension types
+<https://github.com/msgpack/msgpack/blob/master/spec.md#extension-types>`_. Here
+are the ones used by *OTF*:
+
+Extension ``0``: Arbitrary precision ints
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+MessagePack only supports encoding integers in the :math:`[-2^{63}, 2^{64}-1]`
+interval. Python, on the other hand, supports arbitrarily large integers. We
+encode the integers outside the native MessagePack as 2's-complement,
+little-endian payloads inside an Extension Type of code 0:
+
+.. doctest::
+
+  >>> import msgpack
+  >>> msgpack.unpackb(otf.pack.dumpb(2**72))
+  ExtType(code=0, data=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01')
+
+
+Extension ``1``: Shared references
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A shared value is represented by a reference to a node that was previously
+visited while de-serialising the value:
+
+.. doctest::
+
+  >>> import msgpack
+  >>> v = {'a': 'b'}
+  >>> value = [v, v]
+  >>> packed = otf.pack.dumpb(value)
+  >>> msgpack.unpackb(packed)
+  [{'a': 'b'}, ExtType(code=1, data=b'\x03')]
+
+
+The ``ExtType(...)`` translates to a reference with an offset of 3:
+
+.. doctest::
+
+  >>> print(otf.dumps(value))
+  [{'a': 'b'}, ref(3)]
+
+
+This means that we are referencing the object that appeared three instructions
+ago in the *OTF* bin code. The best way to see what we are talking about is to
+disassemble the bin code:
+
+.. testsetup:: shared_ref
+
+  import otf
+  v = {'a': 'b'}
+  value = [v, v]
+  packed = otf.pack.dumpb(value)
+
+
+.. doctest:: shared_ref
+
+  >>> otf.pack.bin.dis(packed)
+  0001: LIST:
+  0002:   MAP:
+  0003:     'a'
+  0004:     'b'
+  0005:   REF(3)
+
+Here we can clearly see that the ref points to ``MAP`` defined on instruction
+``0002``.
+
+In most cases it's easier to just translate the binary value to a text format:
+
+.. doctest:: shared_ref
+
+  >>> print(otf.pack.bin.reduce(packed, otf.pack.text.ExecutablePrinter()))
+  _0 = {'a': 'b'}
+  <BLANKLINE>
+  [_0, _0]
+  <BLANKLINE>
+
+Extension ``2``: Custom constructors
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**OTF** can be extended to support arbitrary types via
+:func:`~otf.pack.register`. For those we need to save:
+
++ The full name of the constructor.
++ The names of keyword arguments.
++ The full list of values to pass back to the constructor.
+
+.. doctest::
+
+  >>> @otf.pack.register
+  ... def _(c: complex):
+  ...   return complex, (c.real,), {"imag": c.imag}
+  >>>
+  >>> packed = otf.pack.dumpb(complex(1, .5))
+  >>> otf.pack.bin.dis(packed)
+  0001: CUSTOM('complex:imag'):
+  0002:   1.0
+  0003:   0.5
+
+We will call the constructor ``complex`` with one keyword argument ``imag`` and
+the full list of arguments is ``[1.0, 0.5]``. The last arguments of this list
+are the keyword arguments.
+
+.. testsetup:: custom
+
+  import otf
+
+  @otf.pack.register
+  def _(c: complex):
+    return complex, (c.real,), {"imag": c.imag}
+
+  packed = otf.pack.dumpb(complex(1, .5))
+
+
+.. doctest:: custom
+
+  >>> print(otf.pack.bin.reduce(packed, otf.pack.text.PrettyPrinter()))
+  complex(1.0, imag=0.5)
+
+In raw MessagePack this is encoded as an array where the first element is an
+``ExtType`` of code 2 and the rest of the list are the arguments:
+
+.. doctest:: custom
+
+  >>> import msgpack
+  >>> msgpack.unpackb(packed)
+  [ExtType(code=2, data=b'complex:imag'), 1.0, 0.5]
+
+
+
+Extension ``3``: Interned constructor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The argument passed to the ``ExtType`` for custom constructors (the full name of
+the constructor and the names of keyword arguments) is called the "shape" of a
+custom constructors. In order to save space if the same shape appears twice in a
+document the encoder uses the "interned_custom" instruction to reuse a previous
+shape declaration.
+
+.. doctest::
+
+  >>> @otf.pack.register
+  ... def _(c: complex):
+  ...   return complex, (), {"real": c.real, "imag": c.imag}
+  >>>
+  >>> packed = otf.pack.dumpb([complex(1, .5), complex(2)])
+  >>> otf.pack.bin.dis(packed)
+  0001: LIST:
+  0002:   CUSTOM('complex:real:imag'):
+  0003:     1.0
+  0004:     0.5
+  0005:   INTERNED_CUSTOM(3):
+  0006:     2.0
+  0007:     0.0
+
+
+.. testsetup:: interned
+
+  import otf
+
+  @otf.pack.register
+  def _(c: complex):
+    return complex, (), {"real": c.real, "imag": c.imag}
+
+  packed = otf.pack.dumpb([complex(1, .5), complex(2)])
+
+
+This results in smaller MessagePack payloads:
+
+.. doctest:: interned
+
+  >>> import msgpack, pprint
+  >>>
+  >>> pprint.pp(msgpack.unpackb(packed), width=60)
+  [[ExtType(code=2, data=b'complex:real:imag'), 1.0, 0.5],
+   [ExtType(code=3, data=b'\x03'), 2.0, 0.0]]
+
+
+*OTF*'s serialised values should be self-descriptive; interning shapes
+encourages clients to focus on the readability of their output format.
 
 FAQ:
 ----

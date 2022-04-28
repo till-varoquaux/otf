@@ -147,6 +147,11 @@ def _explode_tuple(t: tuple[T, ...]) -> Reduced[tuple[T, ...]]:
     return tuple, (list(t),), {}
 
 
+@register
+def _explode_set(s: set[T]) -> Reduced[set[T]]:
+    return set, (list(s),), {}
+
+
 MISSING = object()
 
 
@@ -331,6 +336,8 @@ _mk_dict: Callable[[Iterable[tuple[Any, Any]]], Any] = dict
 
 
 class RuntimeValueBuilder(Accumulator[Any, Any]):
+    """An accumulator that build runtime values."""
+
     memo: list[Any]
 
     def __init__(self) -> None:

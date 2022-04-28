@@ -81,7 +81,7 @@ def roundtrip(v):
         assert explode_exec(executable) == exploded
 
     flat = pack.dumps(v)
-    flat2 = pack.tree.reduce(exploded, pack.text.Simple())
+    flat2 = pack.tree.reduce(exploded, pack.text.CompactPrinter())
 
     assert flat == flat2
     utils.assert_eq_ast(flat, indented)
@@ -137,6 +137,9 @@ def test_dumps():
         pack.dumps((4, -5.0, float("nan"), float("inf"), -float("inf")))
         == "tuple([4, -5.0, nan, inf, -inf])"
     )
+
+    assert pack.dumps({1, 2, 3}) == "set([1, 2, 3])"
+
     assert (
         pack.dumps(pack_utils.Sig(1, 2, x=None))
         == "tests.pack_utils.Sig(1, 2, x=None)"
@@ -212,7 +215,7 @@ tuple([1, 2, 3])
 
 def _dump_exec_no_imports(obj):
     return pack.base.reduce(
-        obj, pack.text.ModulePrinter(indent=4, add_imports=False)
+        obj, pack.text.ExecutablePrinter(indent=4, add_imports=False)
     )
 
 
