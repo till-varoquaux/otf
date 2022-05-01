@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import Final
 
 from .base import copy, register
+from .bin import dumpb, loadb
 from .text import Format, dumps, loads
 
 #:
@@ -45,6 +46,8 @@ EXECUTABLE: Final = Format.EXECUTABLE
 __all__ = (
     "dumps",
     "loads",
+    "loadb",
+    "dumpb",
     "copy",
     "register",
     "COMPACT",

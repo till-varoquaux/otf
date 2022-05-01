@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import abc
 import copyreg
-import dataclasses
 import functools
 import inspect
 import types
@@ -11,6 +10,7 @@ import weakref
 from typing import (
     Any,
     Callable,
+    Collection,
     Generic,
     Iterable,
     Iterator,
@@ -167,34 +167,34 @@ def shallow_reduce(v: Any) -> tuple[tuple[Any, ...], dict[str, Any]]:
     return args, kwargs
 
 
-@dataclasses.dataclass
-class ArgShape:
-    """The types of arguments taken by a function
+def _iter_labels(size: int, kwnames: Collection[str]) -> Iterator[str | None]:
+    for i in range(size - len(kwnames)):
+        yield None
+    yield from kwnames
 
 
-    >>> a =  ArgShape(5, ('a', 'b'))
-    >>> list(a.label(range(7)))
+def label_args(
+    size: int, kwnames: Collection[str], args: Iterable[T]
+) -> Iterator[tuple[str | None, T]]:
+    """
+    >>> list(label_args(7, ('a', 'b'), range(7)))
     [(None, 0), (None, 1), (None, 2), (None, 3), (None, 4), ('a', 5), ('b', 6)]
-    >>> a.group(list(range(7)))
+    """
+    yield from zip(_iter_labels(size, kwnames), args, strict=True)
+
+
+def group_args(
+    size: int, kwnames: Collection[str], args: Iterable[T]
+) -> tuple[list[T], dict[str, T]]:
+    """
+    >>> group_args(7, ('a', 'b'), range(7))
     ([0, 1, 2, 3, 4], {'a': 5, 'b': 6})
     """
-
-    nargs: int  #: number of anonymous arguments
-    kwnames: tuple[str, ...] = ()  #: name of the keyword arguments
-
-    def _iter_keys(self) -> Iterator[str | None]:
-        for i in range(self.nargs):
-            yield None
-        yield from self.kwnames
-
-    def label(self, values: Iterable[T]) -> Iterator[tuple[str | None, T]]:
-        yield from zip(self._iter_keys(), values, strict=True)
-
-    def group(self, values: Iterable[T]) -> tuple[list[T], dict[str, T]]:
-        it = iter(values)
-        args = [next(it) for _ in range(self.nargs)]
-        kwargs = {k: v for k, v in zip(self.kwnames, it, strict=True)}
-        return args, kwargs
+    nargs = size - len(kwnames)
+    it = iter(args)
+    args = [next(it) for _ in range(nargs)]
+    kwargs = {k: v for k, v in zip(kwnames, it, strict=True)}
+    return args, kwargs
 
 
 class Accumulator(Generic[T, V], abc.ABC):
@@ -208,11 +208,13 @@ class Accumulator(Generic[T, V], abc.ABC):
     # `sequence`, `mapping` and `custom` constructors a chance to do something
     # both before and after the sub-nodes are visited.
     @abc.abstractmethod
-    def mapping(self, items: Iterator[tuple[T, T]]) -> T:  # pragma: no cover
+    def mapping(
+        self, size: int, items: Iterator[tuple[T, T]]
+    ) -> T:  # pragma: no cover
         ...
 
     @abc.abstractmethod
-    def sequence(self, items: Iterator[T]) -> T:  # pragma: no cover
+    def sequence(self, size: int, items: Iterator[T]) -> T:  # pragma: no cover
         ...
 
     @abc.abstractmethod
@@ -223,7 +225,11 @@ class Accumulator(Generic[T, V], abc.ABC):
     # constructor)
     @abc.abstractmethod
     def custom(
-        self, constructor: str, shape: ArgShape, values: Iterator[T]
+        self,
+        constructor: str,
+        size: int,
+        kwnames: Collection[str],
+        values: Iterator[T],
     ) -> T:  # pragma: no cover
         ...
 
@@ -298,16 +304,17 @@ def reduce(
         memo[addr] = None
         res: T
         if ty is list:
-            res = sequence(reduce(x) for x in v)
+            res = sequence(len(v), (reduce(x) for x in v))
         elif ty is dict:
-            res = mapping(_gen_kv(v.items()))
+            res = mapping(len(v), _gen_kv(v.items()))
         else:
             deconstructor = _get_custom(ty)
             fn, args, kwargs = deconstructor(v)
             # TODO: fix me
             res = custom(
                 utils.get_locate_name(fn),
-                shape=ArgShape(len(args), tuple(kwargs)),
+                size=len(args) + len(kwargs),
+                kwnames=kwargs,
                 values=_reduce_arg_values(args, kwargs),
             )
         memo[addr] = current
@@ -341,9 +348,13 @@ class RuntimeValueBuilder(Accumulator[Any, Any]):
         return res
 
     def _custom(
-        self, constructor: str, shape: ArgShape, values: Iterator[Any]
+        self,
+        constructor: str,
+        size: int,
+        kwnames: Collection[str],
+        values: Iterator[Any],
     ) -> Any:
-        args, kwargs = shape.group(values)
+        args, kwargs = group_args(size, kwnames, values)
         return _get_named_imploder(constructor)(*args, **kwargs)
 
     def _reduce(
@@ -356,14 +367,18 @@ class RuntimeValueBuilder(Accumulator[Any, Any]):
         return res
 
     def custom(
-        self, constructor: str, shape: ArgShape, values: Iterator[Any]
+        self,
+        constructor: str,
+        size: int,
+        kwnames: Collection[str],
+        values: Iterator[Any],
     ) -> Any:
-        return self._reduce(self._custom, constructor, shape, values)
+        return self._reduce(self._custom, constructor, size, kwnames, values)
 
-    def sequence(self, items: Iterable[T]) -> Any:
+    def sequence(self, size: int, items: Iterable[T]) -> Any:
         return self._reduce(_mk_list, items)
 
-    def mapping(self, items: Iterable[tuple[Any, Any]]) -> Any:
+    def mapping(self, size: int, items: Iterable[tuple[Any, Any]]) -> Any:
         return self._reduce(_mk_dict, items)
 
     def root(self, obj: Any) -> Any:

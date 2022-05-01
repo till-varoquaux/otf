@@ -18,6 +18,7 @@ from typing import (
     Any,
     Callable,
     ClassVar,
+    Collection,
     Final,
     Iterable,
     Iterator,
@@ -113,13 +114,13 @@ class Simple(base.Accumulator[pretty.Doc, str]):
         return pretty.text(repr(constant))
 
     def mapping(
-        self, items: Iterator[tuple[pretty.Doc, pretty.Doc]]
+        self, size: int, items: Iterator[tuple[pretty.Doc, pretty.Doc]]
     ) -> pretty.Doc:
         return self.format_list(
             (k + pretty.text(": ") + v for k, v in items), opar="{", cpar="}"
         )
 
-    def sequence(self, items: Iterator[pretty.Doc]) -> pretty.Doc:
+    def sequence(self, size: int, items: Iterator[pretty.Doc]) -> pretty.Doc:
         return self.format_list(items, opar="[", cpar="]")
 
     def reference(self, offset: int) -> pretty.Doc:
@@ -128,13 +129,14 @@ class Simple(base.Accumulator[pretty.Doc, str]):
     def custom(
         self,
         constructor: str,
-        shape: base.ArgShape,
+        size: int,
+        kwnames: Collection[str],
         values: Iterator[pretty.Doc],
     ) -> pretty.Doc:
         return self.format_list(
             (
                 value if name is None else pretty.text(f"{name}=") + value
-                for name, value in shape.label(values)
+                for name, value in base.label_args(size, kwnames, values)
             ),
             opar=f"{constructor}(",
             cpar=")",
@@ -253,9 +255,9 @@ class ModulePrinter(Prettyfier):
         return box
 
     def mapping(
-        self, items: Iterator[tuple[pretty.Doc, pretty.Doc]]
+        self, size: int, items: Iterator[tuple[pretty.Doc, pretty.Doc]]
     ) -> pretty.Doc:
-        return self.box(super().mapping, items)
+        return self.box(super().mapping, size, items)
 
     def constant(
         self, constant: int | float | None | str | bytes | bool
@@ -263,8 +265,8 @@ class ModulePrinter(Prettyfier):
         self.pos += 1
         return super().constant(constant)
 
-    def sequence(self, items: Iterator[pretty.Doc]) -> pretty.Doc:
-        return self.box(super().sequence, items)
+    def sequence(self, size: int, items: Iterator[pretty.Doc]) -> pretty.Doc:
+        return self.box(super().sequence, size, items)
 
     def reference(self, offset: int) -> pretty.Doc:
         self.pos += 1
@@ -288,12 +290,15 @@ class ModulePrinter(Prettyfier):
     def custom(
         self,
         constructor: str,
-        shape: base.ArgShape,
+        size: int,
+        kwnames: Collection[str],
         values: Iterator[pretty.Doc],
     ) -> pretty.Doc:
         if self.imports is not None and constructor not in self.imports:
             self.imports[constructor] = _get_import(constructor)
-        return self.box(super().custom, constructor, shape=shape, values=values)
+        return self.box(
+            super().custom, constructor, size, kwnames, values=values
+        )
 
     def root(self, doc: pretty.Doc) -> str:
         prelude = pretty.EMPTY
@@ -352,8 +357,6 @@ class EnvBinding:
 
 ENV_ELEMENT = ast.alias | EnvBinding
 
-ARITY1 = base.ArgShape(1, ())
-
 
 def reduce_module(
     module: ast.Module, orig: str, acc: base.Accumulator[T, V]
@@ -371,9 +374,9 @@ def reduce_module(
     # we don't have cycles or binding defined in the wrong order.
     visiting_ref = len(module.body)
 
-    def seq_arg(elts: Iterable[ast.expr]) -> Iterator[T]:
+    def seq_arg(size: int, elts: Iterable[ast.expr]) -> Iterator[T]:
         """Generate the argument for the set and tuple custom block"""
-        yield sequence(reduce(e) for e in elts)
+        yield sequence(size, (reduce(e) for e in elts))
 
     def reduce(expr: ast.expr) -> T:
         nonlocal cnt
@@ -444,13 +447,13 @@ def reduce_module(
                     res = reference(cnt - previous_dst_idx)
                 return res
             case ast.List(l):
-                return sequence((reduce(x) for x in l))
+                return sequence(len(l), (reduce(x) for x in l))
             case ast.Dict(k, v):
-                return mapping(_dict_fields(k, v))
+                return mapping(len(k), _dict_fields(k, v))
             case ast.Set(elts):
-                return custom("set", ARITY1, seq_arg(elts))
+                return custom("set", 1, (), seq_arg(len(elts), elts))
             case ast.Tuple(elts):
-                return custom("tuple", ARITY1, seq_arg(elts))
+                return custom("tuple", 1, (), seq_arg(len(elts), elts))
             case ast.Call(ast.Name("ref"), [ast.Constant(int(offset))], []):
                 return reference(offset)
             case ast.Call(constructor, args, kwargs):
@@ -471,10 +474,10 @@ def reduce_module(
                         error(keyword)
                     values.append(keyword.value)
                     kwnames.append(keyword.arg)
-                shape = base.ArgShape(len(args), tuple(kwnames))
                 return custom(
                     ".".join(reversed(path)),
-                    shape=shape,
+                    size=len(values),
+                    kwnames=kwnames,
                     values=(reduce(value) for value in values),
                 )
         error(

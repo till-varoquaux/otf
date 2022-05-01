@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import ast
 import copyreg
-import dataclasses
 import io
 import linecache
 import math
 import pickle
 import pickletools
 import sys
-from typing import Any
 
 import pytest
 
 from otf import ast_utils, decorators, pack
 
-from . import utils
+from . import pack_utils, utils
 
 LOREM_IPSUM = """
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
@@ -70,21 +68,6 @@ def unedit(s: str):
 
 def explode_exec(text) -> str:
     return pack.text.reduce(text, pack.tree.NodeBuilder())
-
-
-@dataclasses.dataclass
-class Sig:
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
-
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
-
-@pack.register
-def _Sig(a: Sig):
-    return Sig, a.args, a.kwargs
 
 
 def roundtrip(v):
@@ -154,7 +137,10 @@ def test_dumps():
         pack.dumps((4, -5.0, float("nan"), float("inf"), -float("inf")))
         == "tuple([4, -5.0, nan, inf, -inf])"
     )
-    assert pack.dumps(Sig(1, 2, x=None)) == "tests.test_pack.Sig(1, 2, x=None)"
+    assert (
+        pack.dumps(pack_utils.Sig(1, 2, x=None))
+        == "tests.pack_utils.Sig(1, 2, x=None)"
+    )
     tuples = [(x, x + 1) for x in range(5)]
     succ = {x: y for x, y in zip(tuples[:-1], tuples[1:])}
     # assert succ == {}
@@ -458,7 +444,7 @@ def test_weird_floats(x):
 
 
 def test_sig():
-    roundtrip(Sig(1, 2, 3, x="x", y="y"))
+    roundtrip(pack_utils.Sig(1, 2, 3, x="x", y="y"))
 
 
 def test_hash_cons_str():

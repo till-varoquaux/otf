@@ -30,7 +30,7 @@ API:
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Iterator, TypeVar
+from typing import Any, Collection, Iterator, TypeVar
 
 from otf.pack import base
 
@@ -136,6 +136,9 @@ class Mapping:
     def items(self) -> Iterator[tuple[Node, Node]]:
         yield from self.data
 
+    def __len__(self) -> int:
+        return len(self.data)
+
 
 # Mypy doesn't support recursive types
 # (https://github.com/python/mypy/issues/731)
@@ -169,7 +172,7 @@ class NodeBuilder(base.Accumulator[Node, Node]):
     ) -> Node:
         return constant
 
-    def mapping(self, items: Iterator[tuple[Node, Node]]) -> Node:
+    def mapping(self, size: int, items: Iterator[tuple[Node, Node]]) -> Node:
         acc: dict[Any, Any] = {}
         for k, v in items:
             # Do we need to bail out and return a Mapping because the key is
@@ -179,16 +182,20 @@ class NodeBuilder(base.Accumulator[Node, Node]):
             acc[k] = v
         return acc
 
-    def sequence(self, items: Iterator[Node]) -> Node:
+    def sequence(self, size: int, items: Iterator[Node]) -> Node:
         return list(items)
 
     def reference(self, offset: int) -> Node:
         return Reference(offset)
 
     def custom(
-        self, constructor: str, shape: base.ArgShape, values: Iterator[Node]
+        self,
+        constructor: str,
+        size: int,
+        kwnames: Collection[str],
+        values: Iterator[Node],
     ) -> Node:
-        args, kwargs = shape.group(values)
+        args, kwargs = base.group_args(size, kwnames, values)
         return Custom(constructor, *args, **kwargs)
 
     def root(self, node: Node) -> Node:
@@ -206,16 +213,16 @@ def reduce(value: Node, acc: base.Accumulator[T, V]) -> V:
         if isinstance(exp, (int, float, str, bytes, bool, type(None))):
             return constant(exp)
         elif isinstance(exp, list):
-            return sequence((reduce(elt) for elt in exp))
+            return sequence(len(exp), (reduce(elt) for elt in exp))
         elif isinstance(exp, dict | Mapping):
-            return mapping(_gen_kv(exp.items()))
+            return mapping(len(exp), _gen_kv(exp.items()))
         elif isinstance(exp, Reference):
             return reference(exp.offset)
         elif isinstance(exp, Custom):
-            shape = base.ArgShape(len(exp.args), tuple(exp.kwargs))
             return custom(
                 exp.constructor,
-                shape=shape,
+                size=len(exp.args) + len(exp.kwargs),
+                kwnames=tuple(exp.kwargs),
                 values=(reduce(arg) for arg in exp.nodes()),
             )
         else:
