@@ -38,3 +38,11 @@ def test_ref():
     v = [e, e, []]
     packed = bin.dumpb(v)
     assert bin.reduce(packed, tree.NodeBuilder()) == [[], tree.Reference(1), []]
+
+
+def test_interned_shape():
+    v = [pack_utils.Sig(x, double=2 * x, square=x * x) for x in range(1, 10)]
+    packed = bin.dumpb(v)
+    # Shape interning keeps us nice and trim
+    assert len(packed) < 10 * (len("double") + len("square"))
+    assert bin.loadb(packed) == v
