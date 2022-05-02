@@ -46,3 +46,11 @@ def test_interned_shape():
     # Shape interning keeps us nice and trim
     assert len(packed) < 10 * (len("double") + len("square"))
     assert bin.loadb(packed) == v
+
+
+def test_module_not_found():
+
+    with pytest.warns(UserWarning), pytest.raises(
+        ModuleNotFoundError
+    ), bin.ImportGuard():
+        import adfasdfasdf  # noqa: F401

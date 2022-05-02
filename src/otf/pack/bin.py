@@ -10,9 +10,17 @@ The binary format used is an extension of `MessagePack <https://msgpack.org/>`_
 from __future__ import annotations
 
 import pickle
-from typing import Any, Collection, Final, Iterator, TypeVar
+import typing
 
-import msgpack
+if typing.TYPE_CHECKING:  # pragma: no cover
+    import types
+    from typing import Any, Collection, Final, Iterator, Type, TypeVar
+
+    import msgpack
+
+    T = TypeVar("T")
+    V = TypeVar("V")
+
 
 from otf.pack import base, tree
 
@@ -24,14 +32,31 @@ __all__ = (
     "reduce",
 )
 
-T = TypeVar("T")
-V = TypeVar("V")
-
 MAX_RAW_INT: Final = 2**64 - 1
 MIN_RAW_INT: Final = -(2**63)
 
 encode_long: Final = pickle.encode_long
 decode_long: Final = pickle.decode_long
+
+
+class ImportGuard:
+    def __enter__(self) -> None:
+        pass
+
+    def __exit__(
+        self,
+        exctype: Type[BaseException] | None,
+        excinst: BaseException | None,
+        exctb: types.TracebackType | None,
+    ) -> None:
+        if exctype is not None and issubclass(exctype, ModuleNotFoundError):
+            import warnings
+
+            warnings.warn(
+                "Support for binary serialisation is not available because of "
+                "missing dependencies. You can fix this by running ``pip "
+                "install otf[msgpack]``"
+            )
 
 
 class Ext:
@@ -61,6 +86,9 @@ class BinPacker(base.Accumulator[None, bytes]):
     shapes: dict[tuple[str, ...], int]
 
     def __init__(self) -> None:
+        with ImportGuard():
+            import msgpack
+
         self.packer = msgpack.Packer(autoreset=False)
         self.size = -1
         self.shapes = {}
@@ -130,6 +158,9 @@ def reduce(packed: bytes, acc: base.Accumulator[T, V]) -> V:
     custom = acc.custom
     cnt = 0
     shapes: dict[int, list[str]] = {}
+
+    with ImportGuard():
+        import msgpack
 
     def reduce(exp: Any) -> T:
         nonlocal cnt
