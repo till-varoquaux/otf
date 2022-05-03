@@ -14,7 +14,7 @@ import typing
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     import types
-    from typing import Any, Collection, Final, Iterator, Type, TypeVar
+    from typing import Any, Collection, Final, Iterator, TextIO, Type, TypeVar
 
     import msgpack
 
@@ -30,6 +30,7 @@ __all__ = (
     "Ext",
     "BinPacker",
     "reduce",
+    "dis",
 )
 
 MAX_RAW_INT: Final = 2**64 - 1
@@ -230,3 +231,81 @@ def loadb(packed: bytes) -> Any:
 
     """
     return reduce(packed, base.RuntimeValueBuilder())
+
+
+def dis(raw: bytes, file: TextIO | None = None, level: int = 1) -> None:
+    """Output a disassembly of **raw**.
+
+    warning:
+
+        This function is for diagnose purposes only. We make no guarantees that
+        the output format will not change.
+
+
+    The level argument controls how much details get printed. At ``level<=1``
+    only the Otf instructions are printed:
+
+        >>> dis(dumpb((1, 2, 3)))
+        0001: CUSTOM('tuple'):
+        0002:   LIST:
+        0003:     1
+        0004:     2
+        0005:     3
+
+    At ``level=2`` the msgpack instruction are also printed:
+
+        >>> dis(dumpb((1, 2, 3)), level=2)
+        msgpack: Array(len=2)
+        <BLANKLINE>
+        msgpack: ExtType(2, b'tuple')
+        otf:     0001: CUSTOM('tuple'):
+        <BLANKLINE>
+        msgpack: Array(len=3)
+        otf:     0002:   LIST:
+        <BLANKLINE>
+        msgpack: int(1)
+        otf:     0003:     1
+        <BLANKLINE>
+        msgpack: int(2)
+        otf:     0004:     2
+        <BLANKLINE>
+        msgpack: int(3)
+        otf:     0005:     3
+
+    At ``level>=3`` a hexdump of the source is also included:
+
+        >>> dis(dumpb((1, 2, 3)), level=3)
+        raw:     92
+        msgpack: Array(len=2)
+        <BLANKLINE>
+        raw:     C7 05 02 74 75 70 6C 65
+        msgpack: ExtType(2, b'tuple')
+        otf:     0001: CUSTOM('tuple'):
+        <BLANKLINE>
+        raw:     93
+        msgpack: Array(len=3)
+        otf:     0002:   LIST:
+        <BLANKLINE>
+        raw:     01
+        msgpack: int(1)
+        otf:     0003:     1
+        <BLANKLINE>
+        raw:     02
+        msgpack: int(2)
+        otf:     0004:     2
+        <BLANKLINE>
+        raw:     03
+        msgpack: int(3)
+        otf:     0005:     3
+
+    """
+    with ImportGuard():
+        import msgpack  # noqa: F401
+
+    from . import _bin_tools
+
+    if file is None:
+        import sys
+
+        file = sys.stdout
+    return _bin_tools.dis(raw, file, level)
