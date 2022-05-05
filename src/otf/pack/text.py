@@ -12,6 +12,7 @@ import dataclasses
 import enum
 import heapq
 import inspect
+import io
 import math
 import typing
 from typing import (
@@ -72,21 +73,16 @@ class Simple(base.Accumulator[pretty.Doc, str]):
 
     NAN: ClassVar[pretty.Doc] = pretty.text("nan")
     INFINITY: ClassVar[pretty.Doc] = pretty.text("inf")
-    indent: int
-
-    def __init__(self, indent: int = 4) -> None:
-        self.indent = indent
 
     def format_list(
         self,
         docs: Iterable[pretty.Doc],
         *,
-        sep: pretty.Doc = COL_SEP,
+        sep: pretty.Doc = pretty.text(", "),
         opar: str = "(",
         cpar: str = ")",
-        gmode: pretty.Mode = pretty.Mode.AUTO,
     ) -> pretty.Doc:
-        acc = NULL_BREAK
+        acc = pretty.EMPTY
         first = True
         for doc in docs:
             if not first:
@@ -94,12 +90,7 @@ class Simple(base.Accumulator[pretty.Doc, str]):
             else:
                 first = False
             acc += doc
-        if first:
-            return pretty.text(opar + cpar)
-        body = pretty.nest(self.indent, acc) + NULL_BREAK
-        return pretty.DocGroup(
-            gmode, pretty.text(opar) + body + pretty.text(cpar)
-        )
+        return pretty.text(opar) + acc + pretty.text(cpar)
 
     def constant(
         self, constant: int | float | None | str | bytes | bool
@@ -143,16 +134,56 @@ class Simple(base.Accumulator[pretty.Doc, str]):
         )
 
     def root(self, doc: pretty.Doc) -> str:
-        return pretty.single_line(doc)
+        # We only use a very restricted subset of pretty.Doc that always prints
+        # out to one line.
+        out = io.StringIO()
+        docs = [doc]
+        while docs:
+            match docs.pop():
+                case pretty.DocNil():
+                    continue
+                case pretty.DocText(s):
+                    out.write(s)
+                case pretty.DocCons(left=l, right=r):
+                    docs.append(r)
+                    docs.append(l)
+                case _:  # pragma: no cover
+                    assert False
+        return out.getvalue()
 
 
 class Prettyfier(Simple):
     "Convert a value into a multiline document"
+    indent: int
     width: int
 
     def __init__(self, indent: int = 4, width: int = 80) -> None:
-        super().__init__(indent=indent)
+        self.indent = indent
         self.width = width
+
+    def format_list(
+        self,
+        docs: Iterable[pretty.Doc],
+        *,
+        sep: pretty.Doc = COL_SEP,
+        opar: str = "(",
+        cpar: str = ")",
+        gmode: pretty.Mode = pretty.Mode.AUTO,
+    ) -> pretty.Doc:
+        acc = NULL_BREAK
+        first = True
+        for doc in docs:
+            if not first:
+                acc += sep
+            else:
+                first = False
+            acc += doc
+        if first:
+            return pretty.text(opar + cpar)
+        body = pretty.nest(self.indent, acc) + NULL_BREAK
+        return pretty.DocGroup(
+            gmode, pretty.text(opar) + body + pretty.text(cpar)
+        )
 
     def constant(
         self, constant: int | float | None | str | bytes | bool

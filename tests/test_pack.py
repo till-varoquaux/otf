@@ -81,7 +81,7 @@ def roundtrip(v):
         assert explode_exec(executable) == exploded
 
     flat = pack.dumps(v)
-    flat2 = pack.tree.reduce(exploded, pack.text.Simple(4))
+    flat2 = pack.tree.reduce(exploded, pack.text.Simple())
 
     assert flat == flat2
     utils.assert_eq_ast(flat, indented)
