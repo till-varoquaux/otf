@@ -36,9 +36,9 @@ T = TypeVar("T")
 V = TypeVar("V")
 
 __all__ = (
-    "dumps",
-    "loads",
-    "reduce",
+    "dump_text",
+    "load_text",
+    "reduce_text",
     "CompactPrinter",
     "PrettyPrinter",
     "ExecutablePrinter",
@@ -47,7 +47,7 @@ __all__ = (
 
 
 class Format(enum.Enum):
-    """Which format to use for :func:`dumps`"""
+    """Which format to use for :func:`dump_text`"""
 
     #: Print the value on one line with no breaks.
     COMPACT = enum.auto()
@@ -390,7 +390,7 @@ ENV_ELEMENT = ast.alias | EnvBinding
 
 
 # TODO: allow taking in a typing.TextIO and use its name (if it has one)
-def reduce(orig: str, acc: base.Accumulator[T, V]) -> V:
+def reduce_text(orig: str, acc: base.Accumulator[T, V]) -> V:
     assert isinstance(orig, str), orig
     module = ast.parse(orig, mode="exec")
 
@@ -622,7 +622,7 @@ def accumulator(
     return ExecutablePrinter(indent=indent, width=width, add_imports=True)
 
 
-def dumps(
+def dump_text(
     obj: Any,
     indent: int | None = None,
     width: int = 60,
@@ -639,13 +639,13 @@ def dumps(
 
     + :py:const:`~otf.pack.COMPACT` means it will all be printed on one line.
 
-      >>> print(dumps(v2, format = COMPACT))
+      >>> print(dump_text(v2, format = COMPACT))
       [{'nan': nan, '1_5': [1, 2, 3, 4, 5]}, ref(10)]
 
     + :py:const:`~otf.pack.PRETTY` will use the *width* and *indent* argument to
       pretty print the output.
 
-      >>> print(dumps(v2, format = PRETTY, width=20))
+      >>> print(dump_text(v2, format = PRETTY, width=20))
       [
           {
               'nan': nan,
@@ -663,7 +663,7 @@ def dumps(
     + :py:data:`~otf.pack.EXECUTABLE` will print code that can run in a python
       environment where the last statement is the value we're building:
 
-      >>> print(dumps(v2, format = EXECUTABLE, width=40))
+      >>> print(dump_text(v2, format = EXECUTABLE, width=40))
       _0 = {
           'nan': float("nan"),
           '1_5': [1, 2, 3, 4, 5]
@@ -685,16 +685,16 @@ def dumps(
          *indent* wasn't specified and :const:`~otf.pack.PRETTY` otherwise.
 
     """
-    return base.reduce(
+    return base.reduce_runtime_value(
         obj, accumulator(indent=indent, width=width, format=format)
     )
 
 
-def loads(s: str) -> Any:
+def load_text(s: str) -> Any:
     """
     Load a value encoded as a string
 
     Args:
       s (str):
     """
-    return reduce(s, acc=base.RuntimeValueBuilder())
+    return reduce_text(s, acc=base.RuntimeValueBuilder())

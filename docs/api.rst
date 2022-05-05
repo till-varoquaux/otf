@@ -45,10 +45,10 @@ python's syntax:
 
 .. doctest::
 
-   >>> otf.dumps([1, 2, 3, 4, None])
+   >>> otf.dump_text([1, 2, 3, 4, None])
    '[1, 2, 3, 4, None]'
 
-   >>> otf.loads("""
+   >>> otf.load_text("""
    ... # You can have comments in the values you load
    ... {
    ...    tuple([2, 1]): 5,
@@ -63,12 +63,12 @@ The library is extensible and can handle arbitrary python values.
 Shared references:
 
    >>> v = []
-   >>> otf.dumps([v, v])
+   >>> otf.dump_text([v, v])
    '[[], ref(1)]'
 
 Non finite floats:
 
-   >>> otf.dumps([1., 2., -math.inf])
+   >>> otf.dump_text([1., 2., -math.inf])
    '[1.0, 2.0, -inf]'
 
 Adding support for new types:
@@ -79,17 +79,20 @@ Adding support for new types:
    ... def _(fraction: fractions.Fraction):
    ...   return fractions.Fraction, str(fraction)
    ...
-   >>> otf.dumps(fractions.Fraction(227, 73))
+   >>> otf.dump_text(fractions.Fraction(227, 73))
    "fractions.Fraction('227/73')"
 
 Serialisation functions and classes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. autofunction:: dumps
+.. autofunction:: dump_text
+  :noindex:
 
-.. autofunction:: loads
+.. autofunction:: load_text
+  :noindex:
 
 .. autofunction:: register
+  :noindex:
 
 .. autoclass:: NamedReference
 

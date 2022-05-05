@@ -33,23 +33,27 @@ def test_msgpack_bounds():
     ),
 )
 def test_roundtrip(value):
-    packed = bin.dumpb(value)
-    assert bin.loadb(packed) == value
+    packed = bin.dump_bin(value)
+    assert bin.load_bin(packed) == value
 
 
 def test_ref():
     e = []
     v = [e, e, []]
-    packed = bin.dumpb(v)
-    assert bin.reduce(packed, tree.NodeBuilder()) == [[], tree.Reference(1), []]
+    packed = bin.dump_bin(v)
+    assert bin.reduce_bin(packed, tree.NodeBuilder()) == [
+        [],
+        tree.Reference(1),
+        [],
+    ]
 
 
 def test_interned_shape():
     v = [pack_utils.Sig(x, double=2 * x, square=x * x) for x in range(1, 10)]
-    packed = bin.dumpb(v)
+    packed = bin.dump_bin(v)
     # Shape interning keeps us nice and trim
     assert len(packed) < 10 * (len("double") + len("square"))
-    assert bin.loadb(packed) == v
+    assert bin.load_bin(packed) == v
 
 
 def test_module_not_found():
@@ -62,7 +66,7 @@ def test_module_not_found():
 
 def test_msgpack_frames():
     def desc(value):
-        packed = bin.dumpb(value)
+        packed = bin.dump_bin(value)
         unpacker = msgpack.fallback.Unpacker()
         unpacker.feed(packed)
         return [str(f) for f in _bin_tools._gen_msgpack_frames(unpacker)]
@@ -113,7 +117,7 @@ def test_peakable_iterator():
     ),
 )
 def test_frames_round_trip(value):
-    packed = bin.dumpb(value)
+    packed = bin.dump_bin(value)
     reconstituted = b"".join(
         msg_pack_frame.raw
         for otf_frame in _bin_tools.gen_otf_frames(packed)
@@ -130,7 +134,7 @@ def dis(value: Any, level=1) -> str:
     if isinstance(value, Raw):
         packed = value.value
     else:
-        packed = bin.dumpb(value)
+        packed = bin.dump_bin(value)
     buf = io.StringIO()
     bin.dis(packed, buf, level=level)
     return buf.getvalue()
@@ -213,7 +217,7 @@ def test_dis():
     ]
     assert stripped_dis(b"123") == ["b'123'"]
 
-    assert stripped_dis(Raw(bin.dumpb([1, 2, 3]) + b"garbage")) == [
+    assert stripped_dis(Raw(bin.dump_bin([1, 2, 3]) + b"garbage")) == [
         "LIST:",
         "1",
         "2",
@@ -221,7 +225,7 @@ def test_dis():
         "ERROR: Garbage at the end of the file",
     ]
 
-    assert stripped_dis(Raw(bin.dumpb([1, 2, 3])[:-1])) == [
+    assert stripped_dis(Raw(bin.dump_bin([1, 2, 3])[:-1])) == [
         "LIST:",
         "1",
         "2",

@@ -1029,7 +1029,7 @@ class Suspension:
         workflow: Workflow[Any, Any],
     ) -> Suspension:
         # We want the default constructor to be the one used by the
-        # serialisation code (to make dumps pretty).
+        # serialisation code (to make dump_text pretty).
         # _make is a constructor that should only be used internally.
         res = Suspension.__new__(Suspension)
         res.position = position

@@ -67,25 +67,25 @@ def unedit(s: str):
 
 
 def explode_exec(text) -> str:
-    return pack.text.reduce(text, pack.tree.NodeBuilder())
+    return pack.reduce_text(text, pack.tree.NodeBuilder())
 
 
 def roundtrip(v):
     exploded = pack.tree.explode(v)
     v2 = pack.tree.implode(exploded)
-    indented = pack.dumps(v, indent=4)
-    executable = pack.dumps(v, format=pack.EXECUTABLE)
+    indented = pack.dump_text(v, indent=4)
+    executable = pack.dump_text(v, format=pack.EXECUTABLE)
 
     if exploded == exploded:
-        assert pack.text.reduce(indented, pack.tree.NodeBuilder()) == exploded
+        assert pack.reduce_text(indented, pack.tree.NodeBuilder()) == exploded
         assert explode_exec(executable) == exploded
 
-    flat = pack.dumps(v)
-    flat2 = pack.tree.reduce(exploded, pack.text.CompactPrinter())
+    flat = pack.dump_text(v)
+    flat2 = pack.tree.reduce_tree(exploded, pack.text.CompactPrinter())
 
     assert flat == flat2
     utils.assert_eq_ast(flat, indented)
-    v3 = pack.loads(flat)
+    v3 = pack.load_text(flat)
     v4 = unedit(executable)
     # nan can wreak havoc in comparisons so we compare pickles...
     assert (
@@ -132,26 +132,26 @@ PRETTY_ACK = r"""otf.Closure(
 )"""
 
 
-def test_dumps():
+def test_dump_text():
     assert (
-        pack.dumps((4, -5.0, float("nan"), float("inf"), -float("inf")))
+        pack.dump_text((4, -5.0, float("nan"), float("inf"), -float("inf")))
         == "tuple([4, -5.0, nan, inf, -inf])"
     )
 
-    assert pack.dumps({1, 2, 3}) == "set([1, 2, 3])"
+    assert pack.dump_text({1, 2, 3}) == "set([1, 2, 3])"
 
     assert (
-        pack.dumps(pack_utils.Sig(1, 2, x=None))
+        pack.dump_text(pack_utils.Sig(1, 2, x=None))
         == "tests.pack_utils.Sig(1, 2, x=None)"
     )
     tuples = [(x, x + 1) for x in range(5)]
     succ = {x: y for x, y in zip(tuples[:-1], tuples[1:])}
     # assert succ == {}
-    assert pack.dumps(succ) == (
+    assert pack.dump_text(succ) == (
         "{tuple([0, 1]): tuple([1, 2]), ref(4): tuple([2, 3]), "
         "ref(4): tuple([3, 4]), ref(4): tuple([4, 5])}"
     )
-    assert pack.dumps(ackerman, indent=4) == PRETTY_ACK
+    assert pack.dump_text(ackerman, indent=4) == PRETTY_ACK
 
 
 def test_get_import(monkeypatch):
@@ -188,18 +188,18 @@ def test_load_exec_float():
     for nan in ("nan", "float('nan')"):
         assert math.isnan(explode_exec(nan))
     with pytest.raises(TypeError):
-        assert pack.loads("float('nan', a=5)")
+        assert pack.load_text("float('nan', a=5)")
 
 
 def test_dump_exec():
-    assert pack.dumps([], format=pack.EXECUTABLE) == "[]\n"
-    assert pack.dumps(
+    assert pack.dump_text([], format=pack.EXECUTABLE) == "[]\n"
+    assert pack.dump_text(
         (math.nan, math.inf, -math.inf), format=pack.EXECUTABLE
     ) == ('tuple([float("nan"), float("inf"), -float("inf")])\n')
     x = {}
     v = (x, x)
     assert (
-        pack.dumps([v, v, v, v], format=pack.EXECUTABLE)
+        pack.dump_text([v, v, v, v], format=pack.EXECUTABLE)
         == "_0 = {}\n\n_1 = tuple([_0, _0])\n\n[_1, _1, _1, _1]\n"
     )
 
@@ -214,7 +214,7 @@ tuple([1, 2, 3])
 
 
 def _dump_exec_no_imports(obj):
-    return pack.base.reduce(
+    return pack.base.reduce_runtime_value(
         obj, pack.text.ExecutablePrinter(indent=4, add_imports=False)
     )
 
@@ -224,7 +224,9 @@ def test_dump_exec_bad_import(monkeypatch):
         return RuntimeError("locate failed")
 
     monkeypatch.setattr(pack.text, "_get_import", bad_get_import)
-    assert pack.dumps((1, 2, 3), format=pack.EXECUTABLE) == BAD_IMPORT_EXPECTED
+    assert (
+        pack.dump_text((1, 2, 3), format=pack.EXECUTABLE) == BAD_IMPORT_EXPECTED
+    )
 
     assert _dump_exec_no_imports((1, 2, 3)) == "tuple([1, 2, 3])\n"
 
@@ -252,74 +254,74 @@ otf.Closure(
 
 def test_dump_exec_acckerman():
     with open("/tmp/t", "w") as fd:
-        fd.write(pack.dumps(ackerman, format=pack.EXECUTABLE))
-    assert pack.dumps(ackerman, format=pack.EXECUTABLE) == EDITABLE_ACKERMAN
+        fd.write(pack.dump_text(ackerman, format=pack.EXECUTABLE))
+    assert pack.dump_text(ackerman, format=pack.EXECUTABLE) == EDITABLE_ACKERMAN
 
 
-def test_loads_prelude():
+def test_load_text_prelude():
     with pytest.raises(ValueError, match="Empty document"):
-        pack.loads("# Comments don't show up in the ast\n\n")
+        pack.load_text("# Comments don't show up in the ast\n\n")
     with pytest.raises(ValueError, match="The last node"):
-        pack.loads("v=5")
+        pack.load_text("v=5")
     with pytest.raises(ValueError, match="import ... as"):
-        pack.loads("import c, a as b; 5")
+        pack.load_text("import c, a as b; 5")
     with pytest.raises(ValueError, match="`from ... import`"):
-        pack.loads("from a import b; 5")
+        pack.load_text("from a import b; 5")
     with pytest.raises(ValueError, match="Expression"):
-        pack.loads("5; 5")
+        pack.load_text("5; 5")
     with pytest.raises(ValueError, match="Assigning to multiple targets"):
-        pack.loads("a = b = 5; 5")
+        pack.load_text("a = b = 5; 5")
     with pytest.raises(
         ValueError, match="Only assigning to top level variables is supported"
     ):
-        pack.loads("a, b = 5; 5")
+        pack.load_text("a, b = 5; 5")
     with pytest.raises(ValueError, match="reserved keyword"):
-        pack.loads("nan = 5; 5")
+        pack.load_text("nan = 5; 5")
 
     with pytest.raises(ValueError, match="Cannot rebind a variable"):
-        pack.loads("x = 6; x = 5; 5")
+        pack.load_text("x = 6; x = 5; 5")
 
     with pytest.raises(
         ValueError, match="Cannot import after declaring variables"
     ):
-        pack.loads("x = 6; import math; 5")
+        pack.load_text("x = 6; import math; 5")
 
     with pytest.raises(
         ValueError, match="Cannot redefine a name already used by an import"
     ):
-        pack.loads("import math; math = 5; 5")
+        pack.load_text("import math; math = 5; 5")
 
     with pytest.raises(ValueError, match="Only bindings"):
-        pack.loads("assert False; 5")
+        pack.load_text("assert False; 5")
 
-    assert pack.loads("import i.donot.exist; 5") == 5
-    assert pack.loads("import i.donot.exist, a, a.b, c; 5") == 5
-    assert pack.loads("import i.donot.exist; 5") == 5
-    assert pack.loads("a: int = 5; 5") == 5
+    assert pack.load_text("import i.donot.exist; 5") == 5
+    assert pack.load_text("import i.donot.exist, a, a.b, c; 5") == 5
+    assert pack.load_text("import i.donot.exist; 5") == 5
+    assert pack.load_text("a: int = 5; 5") == 5
 
 
-def test_loads_exec_refs():
+def test_load_text_exec_refs():
 
     with pytest.raises(ValueError, match="Unbound variable"):
-        pack.loads("[a, a]")
+        pack.load_text("[a, a]")
     with pytest.raises(ValueError, match="Unbound variable"):
-        pack.loads("import a.b.c; [a, a]")
+        pack.load_text("import a.b.c; [a, a]")
     with pytest.raises(ValueError, match="reference an imported module"):
-        pack.loads("import a; [a, a]")
+        pack.load_text("import a; [a, a]")
 
-    assert pack.loads("a = 5; [a, a]") == [5, 5]
+    assert pack.load_text("a = 5; [a, a]") == [5, 5]
     assert explode_exec("a = [1, 2]; b = [a, a]; [b, a]") == [
         [[1, 2], pack.tree.Reference(offset=3)],
         pack.tree.Reference(offset=1),
     ]
 
     with pytest.raises(ValueError, match="circular reference"):
-        pack.loads("a = [a, a]; a") == ""
+        pack.load_text("a = [a, a]; a") == ""
 
     with pytest.raises(ValueError, match="isn't defined yet"):
-        pack.loads("a = [b, b]; b = 5; a")
+        pack.load_text("a = [b, b]; b = 5; a")
 
-    assert pack.loads("b = 5; a = [b, b];  a") == [5, 5]
+    assert pack.load_text("b = 5; a = [b, b];  a") == [5, 5]
 
 
 def double(v):
@@ -340,56 +342,59 @@ RANGE = """
 """
 
 
-def test_loads():
-    assert pack.loads("5") == pack.loads("+5") == 5
-    assert pack.loads("-5") == -5
-    assert math.isnan(pack.loads("nan"))
-    assert pack.loads("inf") == pack.loads("+inf") == math.inf
-    assert pack.loads("-inf") == -math.inf
-    assert pack.loads("[None, True]") == [None, True]
-    assert pack.loads("{1: None, 2: True}") == {1: None, 2: True}
-    assert pack.loads("{1: [], 2: ref(2)}") == {1: [], 2: []}
-    assert pack.loads("{1: [], 2: ref(2)}") == {1: [], 2: []}
+def test_load_text():
+    assert pack.load_text("5") == pack.load_text("+5") == 5
+    assert pack.load_text("-5") == -5
+    assert math.isnan(pack.load_text("nan"))
+    assert pack.load_text("inf") == pack.load_text("+inf") == math.inf
+    assert pack.load_text("-inf") == -math.inf
+    assert pack.load_text("[None, True]") == [None, True]
+    assert pack.load_text("{1: None, 2: True}") == {1: None, 2: True}
+    assert pack.load_text("{1: [], 2: ref(2)}") == {1: [], 2: []}
+    assert pack.load_text("{1: [], 2: ref(2)}") == {1: [], 2: []}
 
-    assert pack.loads("tests.test_pack.double(5)") == 10
+    assert pack.load_text("tests.test_pack.double(5)") == 10
 
-    assert pack.loads(RANGE) == [1, 2, 3, 4, 5]
+    assert pack.load_text(RANGE) == [1, 2, 3, 4, 5]
 
     with pytest.raises(ValueError, match="Dictionary expansion"):
-        pack.loads("{1: 2, **a}")
+        pack.load_text("{1: 2, **a}")
 
     with pytest.raises(ValueError):
-        pack.loads("[1, 2, 3, \n5+5\n]")
+        pack.load_text("[1, 2, 3, \n5+5\n]")
 
     with pytest.raises(ValueError):
-        pack.loads("a['a'](5)")
+        pack.load_text("a['a'](5)")
 
     with pytest.raises(ValueError):
-        pack.loads("list(**kwargs)")
+        pack.load_text("list(**kwargs)")
 
     assert (
-        pack.loads("complex(5, 2)")
-        == pack.loads("complex(5, imag=2)")
-        == pack.loads("complex(real=5, imag=2)")
+        pack.load_text("complex(5, 2)")
+        == pack.load_text("complex(5, imag=2)")
+        == pack.load_text("complex(real=5, imag=2)")
         == complex(5, 2)
     )
 
+    with pytest.raises(LookupError):
+        pack.load_text("mylib.a.b(5, 2)")
 
-def test_loads_shorthands():
-    assert pack.loads("{}") == {}
 
-    assert pack.loads("{1: 1}") == {1: 1}
+def test_load_text_shorthands():
+    assert pack.load_text("{}") == {}
+
+    assert pack.load_text("{1: 1}") == {1: 1}
 
     # Even though we don't output values in this format we might still see them
     # in the input...
 
-    assert pack.loads("{1, 2, 3}") == {1, 2, 3}
+    assert pack.load_text("{1, 2, 3}") == {1, 2, 3}
 
-    assert pack.loads("(1, 2, 3)") == (1, 2, 3)
+    assert pack.load_text("(1, 2, 3)") == (1, 2, 3)
 
-    assert pack.loads("()") == ()
+    assert pack.load_text("()") == ()
 
-    assert pack.loads("(1,)") == (1,)
+    assert pack.load_text("(1,)") == (1,)
 
 
 def test_simple():

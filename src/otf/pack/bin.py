@@ -25,11 +25,11 @@ if typing.TYPE_CHECKING:  # pragma: no cover
 from otf.pack import base, tree
 
 __all__ = (
-    "dumpb",
-    "loadb",
+    "dump_bin",
+    "load_bin",
     "Ext",
     "BinPacker",
-    "reduce",
+    "reduce_bin",
     "dis",
 )
 
@@ -150,7 +150,7 @@ class BinPacker(base.Accumulator[None, bytes]):
         return self.packer.bytes()
 
 
-def reduce(packed: bytes, acc: base.Accumulator[T, V]) -> V:
+def reduce_bin(packed: bytes, acc: base.Accumulator[T, V]) -> V:
     """Read a binary encoded value."""
     constant = acc.constant
     reference = acc.reference
@@ -210,7 +210,7 @@ def reduce(packed: bytes, acc: base.Accumulator[T, V]) -> V:
     return acc.root(reduce(value))
 
 
-def dumpb(obj: Any) -> bytes:
+def dump_bin(obj: Any) -> bytes:
     """Serialise *obj* to the binary format
 
     Note:
@@ -218,10 +218,10 @@ def dumpb(obj: Any) -> bytes:
       This feature is only available if otf was installed with ``msgpack``
       (e.g.: via ``pip install otf[msgpack]``).
     """
-    return base.reduce(obj, BinPacker())
+    return base.reduce_runtime_value(obj, BinPacker())
 
 
-def loadb(packed: bytes) -> Any:
+def load_bin(packed: bytes) -> Any:
     """Read an object written in binary format
 
     Note:
@@ -230,10 +230,10 @@ def loadb(packed: bytes) -> Any:
       (e.g.: via ``pip install otf[msgpack]``).
 
     """
-    return reduce(packed, base.RuntimeValueBuilder())
+    return reduce_bin(packed, base.RuntimeValueBuilder())
 
 
-def dis(raw: bytes, file: TextIO | None = None, level: int = 1) -> None:
+def dis(raw: bytes, out: TextIO | None = None, level: int = 1) -> None:
     """Output a disassembly of **raw**.
 
     warning:
@@ -245,7 +245,7 @@ def dis(raw: bytes, file: TextIO | None = None, level: int = 1) -> None:
     The level argument controls how much details get printed. At ``level<=1``
     only the Otf instructions are printed:
 
-        >>> dis(dumpb((1, 2, 3)))
+        >>> dis(dump_bin((1, 2, 3)))
         0001: CUSTOM('tuple'):
         0002:   LIST:
         0003:     1
@@ -254,7 +254,7 @@ def dis(raw: bytes, file: TextIO | None = None, level: int = 1) -> None:
 
     At ``level=2`` the msgpack instruction are also printed:
 
-        >>> dis(dumpb((1, 2, 3)), level=2)
+        >>> dis(dump_bin((1, 2, 3)), level=2)
         msgpack: Array(len=2)
         <BLANKLINE>
         msgpack: ExtType(2, b'tuple')
@@ -274,7 +274,7 @@ def dis(raw: bytes, file: TextIO | None = None, level: int = 1) -> None:
 
     At ``level>=3`` a hexdump of the source is also included:
 
-        >>> dis(dumpb((1, 2, 3)), level=3)
+        >>> dis(dump_bin((1, 2, 3)), level=3)
         raw:     92
         msgpack: Array(len=2)
         <BLANKLINE>
@@ -298,14 +298,21 @@ def dis(raw: bytes, file: TextIO | None = None, level: int = 1) -> None:
         msgpack: int(3)
         otf:     0005:     3
 
+    Arguments:
+
+      raw(bytes): value to disassemble
+      out(file-like):
+        `text file <https://docs.python.org/3/glossary.html#term-text-file>`_
+        where the output will be written (defaults to :data:`sys.stdout`).
+      level(int): between ``1`` and ``3``.
     """
     with ImportGuard():
         import msgpack  # noqa: F401
 
     from . import _bin_tools
 
-    if file is None:
+    if out is None:
         import sys
 
-        file = sys.stdout
-    return _bin_tools.dis(raw, file, level)
+        out = sys.stdout
+    return _bin_tools.dis(raw, out, level)

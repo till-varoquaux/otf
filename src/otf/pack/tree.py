@@ -18,7 +18,7 @@ like when it's reduced::
 You can also leverage this module to check other reducers::
 
   >>> import otf.pack.text
-  >>> otf.pack.text.reduce("{4: I.do_not.exist(1)}", NodeBuilder())
+  >>> otf.pack.reduce_text("{4: I.do_not.exist(1)}", NodeBuilder())
   {4: Custom(constructor='I.do_not.exist', args=(1,), kwargs={})}
 
 
@@ -43,7 +43,7 @@ __all__ = (
     "Reference",
     "Custom",
     "NodeBuilder",
-    "reduce",
+    "reduce_tree",
     "explode",
     "implode",
 )
@@ -202,7 +202,7 @@ class NodeBuilder(base.Accumulator[Node, Node]):
         return node
 
 
-def reduce(value: Node, acc: base.Accumulator[T, V]) -> V:
+def reduce_tree(value: Node, acc: base.Accumulator[T, V]) -> V:
     constant = acc.constant
     reference = acc.reference
     sequence = acc.sequence
@@ -242,7 +242,7 @@ def explode(v: Any) -> Node:
     Args:
       v:
     """
-    return base.reduce(v, NodeBuilder())
+    return base.reduce_runtime_value(v, NodeBuilder())
 
 
 def implode(v: Node) -> Any:
@@ -251,4 +251,4 @@ def implode(v: Node) -> Any:
     Args:
       v:
     """
-    return reduce(v, base.RuntimeValueBuilder())
+    return reduce_tree(v, base.RuntimeValueBuilder())

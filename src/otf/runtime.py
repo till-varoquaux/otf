@@ -19,7 +19,7 @@ __all__ = (
 )
 
 # For the docstring
-dumps = pack.dumps
+dump_text = pack.dump_text
 
 
 class NamedReference(Generic[utils.Addressable]):
@@ -30,7 +30,7 @@ class NamedReference(Generic[utils.Addressable]):
 
        >>> import math
        >>> fl = NamedReference(math.floor)
-       >>> dumps(fl)
+       >>> dump_text(fl)
        "otf.NamedReference('math.floor')"
 
     If the wrapped object is callable then the wrapped will pass calls

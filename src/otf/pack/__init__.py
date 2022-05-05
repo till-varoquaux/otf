@@ -28,9 +28,17 @@ from __future__ import annotations
 
 from typing import Final
 
-from .base import copy, register
-from .bin import dumpb, loadb
-from .text import Format, dumps, loads
+from .base import RuntimeValueBuilder, copy, reduce_runtime_value, register
+from .bin import BinPacker, dis, dump_bin, load_bin, reduce_bin
+from .text import (
+    CompactPrinter,
+    ExecutablePrinter,
+    Format,
+    PrettyPrinter,
+    dump_text,
+    load_text,
+    reduce_text,
+)
 
 #: Print the value on one line
 COMPACT: Final = Format.COMPACT
@@ -45,10 +53,19 @@ __all__ = (
     "COMPACT",
     "PRETTY",
     "EXECUTABLE",
-    "dumps",
-    "loads",
-    "dumpb",
-    "loadb",
-    "copy",
+    "dump_text",
+    "load_text",
+    "dump_bin",
+    "load_bin",
     "register",
+    "reduce_runtime_value",
+    "reduce_bin",
+    "reduce_text",
+    "RuntimeValueBuilder",
+    "CompactPrinter",
+    "PrettyPrinter",
+    "ExecutablePrinter",
+    "BinPacker",
+    "copy",
+    "dis",
 )

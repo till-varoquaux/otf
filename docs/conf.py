@@ -15,10 +15,12 @@ release = version = otf.__version__
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosectionlabel",
     "sphinx.ext.doctest",
     "sphinx.ext.graphviz",
     "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
+    "sphinx.ext.todo",
     "sphinxotf",
 ]
 
@@ -32,3 +34,5 @@ intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 graphviz_output_format = "svg"
 
 html_theme = "furo"
+
+todo_include_todos = True

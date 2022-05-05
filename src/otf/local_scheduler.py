@@ -115,7 +115,7 @@ class Result(TracePoint, Generic[T]):
 
         from . import _ipy_utils
 
-        html = _ipy_utils.highlight(pack.dumps(self.value))
+        html = _ipy_utils.highlight(pack.dump_text(self.value))
         return ipywidgets.HTML(html)
 
     def _ipy_title_(self, index: int) -> str:
@@ -147,7 +147,7 @@ class Checkpoint(TracePoint):
         elts = [code]
         if self.suspension.awaiting is not None:
             core = _ipy_utils.highlight(
-                pack.dumps(self.suspension.awaiting, indent=4, width=120)
+                pack.dump_text(self.suspension.awaiting, indent=4, width=120)
             )
             awaiting = ipywidgets.HTML(f"<b>Awaiting:</b>{core}")
             elts.append(awaiting)
@@ -160,7 +160,7 @@ class Checkpoint(TracePoint):
         # variable-explorer-in-jupyter-notebook
         local_rows = []
         for k, v in self.suspension.variables.items():
-            value = _ipy_utils.summarize(pack.dumps(v))
+            value = _ipy_utils.summarize(pack.dump_text(v))
             local_rows.append(f"<tr><td><b>{k}</b></td><td>{value}</td></tr>")
         tbody = "".join(local_rows)
         local_table = (

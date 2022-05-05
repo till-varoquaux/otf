@@ -256,7 +256,7 @@ def _mk_kv_reducer(
     return res
 
 
-def reduce(
+def reduce_runtime_value(
     obj: Any, acc: Accumulator[T, V], string_hashcon_length: int = 32
 ) -> V:
     cnt: int = -1
@@ -362,7 +362,10 @@ class RuntimeValueBuilder(Accumulator[Any, Any]):
         values: Iterator[Any],
     ) -> Any:
         args, kwargs = group_args(size, kwnames, values)
-        return _get_named_imploder(constructor)(*args, **kwargs)
+        imploder = _get_named_imploder(constructor)
+        if imploder is None:
+            raise LookupError(f"Constructor not found: {constructor!r}")
+        return imploder(*args, **kwargs)
 
     def _reduce(
         self, fn: Callable[P, Any], *args: P.args, **kwargs: P.kwargs
@@ -395,12 +398,12 @@ class RuntimeValueBuilder(Accumulator[Any, Any]):
 def copy(v: T) -> T:
     """Copy a value using its representation.
 
-    ``copy(v)`` is equivalent to ``loads(dumps(v))``.
+    ``copy(v)`` is equivalent to ``load_text(dump_text(v))``.
 
     Args:
       v:
     """
     # For performance reasons we might want to add the ability to not copy
     # immutable values.
-    res: T = reduce(v, RuntimeValueBuilder())
+    res: T = reduce_runtime_value(v, RuntimeValueBuilder())
     return res
