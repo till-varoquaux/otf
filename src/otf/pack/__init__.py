@@ -10,8 +10,8 @@ types; we don't rely on inheritance or the runtime structure of values to handle
 anything that isn't of a supported type. Support for new types can be added via
 :func:`register`.
 
-Supported types:
-----------------
+Supported types
+---------------
 
 Out of the box, the types that are supported are:
 

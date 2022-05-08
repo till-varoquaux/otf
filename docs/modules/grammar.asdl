@@ -1,0 +1,29 @@
+-- builtin types are:
+-- identifier, string, constant
+
+module OTF {
+    doc = Doc(import* imports, assign* bindings, expr value)
+
+    -- We do not support import as
+    import = Import(identifier* names)
+
+    -- We only support assigning to a name
+    assign = Assign(identifier target, expr? annotation, expr value)
+
+    expr = Dict(expr* keys, expr* values)
+         | Set(expr* elts)
+         | List(expr* elts)
+         | Tuple(expr* elts)
+         | Call(function_identifier, expr* args, keyword* keywords)
+         -- We don't support f-strings here
+         | JoinedStr(string* values)
+         | Constant(constant value)
+         | Name(identifier id)
+
+    -- In the python grammar this is part of expr
+    function_identifier = Attribute(function_identifier value, identifier attr)
+         | FName(identifier id)
+
+    -- keyword arguments supplied to call (**kwargs not supported)
+    keyword = (identifier arg, expr value)
+}

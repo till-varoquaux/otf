@@ -14,6 +14,7 @@ copyright = otf.__copyright__
 release = version = otf.__version__
 
 extensions = [
+    "asdl_highlight",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.doctest",

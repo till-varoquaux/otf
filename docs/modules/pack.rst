@@ -159,6 +159,28 @@ Utility functions
 
 .. autofunction:: dis
 
+Description of the text format
+------------------------------
+
+*OTF*'s text representation is a subset of python. In fact we use the cpython
+parser to read values. The easiest to specify the language is to use an ASDL
+[ASDL97]_ representation based on the one for the `python grammar
+<https://docs.python.org/3/library/ast.html#abstract-grammar>`_:
+
+.. literalinclude:: grammar.asdl
+  :language: asdl
+
+
+An *OTF* serialised values consists of 3 parts:
+
++ **imports**: which are ignored by our parser
++ **bindings**: in form of `<name> = <value>`
++ **value**: an expression that can use any of the values defined in the
+  bindings.
+
+.. todo::
+  This part needs to be filled in properly.
+
 Description of the binary format
 --------------------------------
 
@@ -352,23 +374,97 @@ This results in smaller MessagePack payload_text:
 *OTF*'s serialised values should be self-descriptive; interning shapes
 encourages clients to focus on the readability of their output format.
 
-FAQ:
-----
+Design choice
+-------------
 
-Is it fast?
-  No. The main focus is to provide an easy and safe way to serialise arbitrary
-  python values. If you want to save large amounts of data we recommend you
-  use a format that is tailored to the type of data you are saving. Some good
-  examples would be:
+Not prioritising speed
+^^^^^^^^^^^^^^^^^^^^^^
 
-  + `Arrow <https://arrow.apache.org/>`_ and
-    `Parquet <https://parquet.apache.org/>`_ for column oriented data.
-  + `Protocol Buffer <https://developers.google.com/protocol-buffers/>`_ for
-    structured data (i.e.: data with a fixed schema).
+The main focus is to provide an easy and safe way to serialise arbitrary python
+values. Fast python serialisation libraries (e.g.: `msgpack
+<https://github.com/msgpack/msgpack-python>`_ and `_pickle
+<https://github.com/python/cpython/blob/main/Modules/_pickle.c>`_) significant
+part should be written in C. Both MsgPack and Pickle offer fallbacks in pure
+python. Maintaining a big a C stub (let alone a fallback in pure python) would
+be a significant cost. *OTF* is still a young project and being nimble is
+important.
 
-..
-  Why are references relative?
-    Referential transparency
+If you want to save large amounts of data we recommend you use a format that is
+tailored to the type of data you are saving. Some good examples would be:
 
-  Why no inheritance?
-    Because they cause problems...
++ `Arrow <https://arrow.apache.org/>`_ and `Parquet
+  <https://parquet.apache.org/>`_ for column oriented data.
++ `Protocol Buffer <https://developers.google.com/protocol-buffers/>`_ for
+  structured data (i.e.: data with a fixed schema).
+
+Relative references
+^^^^^^^^^^^^^^^^^^^
+
+There are several ways to encode shared references. Here are a couple of
+options we rejected:
+
++ **Marking**: You could "mark" the values that will be used later as shared
+  references either by encoding them in a separate section and referring to them
+  later or by having an instruction to save them the first time the encoder sees
+  them. We chose to avoid this route because:
+
+  1. It requires two different instructions (one to save the value and one to
+     refer to it).
+  2. You have to do an additional pass over the value you're about to encode to
+     detect all the shared references.
+
++ **Absolute references**: instead of using an offset relative to the current
+  position to encode the references we could have used a position relative to
+  the start of the document. We chose to use a relative position because that
+  allows us to insert an existing document without having to rewrite it.
+
+Not allowing recursive values
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Recursive values are somewhat of a rare corner case and they can cause a lot of
+headaches. The naive approach is to assume you can construct values in two
+stages: initialise them as empty, create their children and then fill them.
+This works fine if you look at a value like::
+
+  value = [[],]
+  value[0].append(0)
+
+But now let's consider this case::
+
+  value = ([],)
+  value[0].append(0)
+
+In this case you can't create ``value`` as an empty tuple and they fill
+it... The corner cases cases get even more problematic when you consider that we
+rely heavily on user provided serialisation function (via :func:`register`). We
+don't actually know how much of its argument a constructor introspects...
+
+
+Not relying on runtime representation or inheritance
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+One of the main philosophical differences between :mod:`pickle` and ``otf.pack``
+is that we are a lot more explicit. ``otf.pack`` only supports values of types
+that it explicitly knows how to handle. ``pickle``, on the other hand, will try
+to serialise values based upon their runtime representation (e.g.: classes whose
+``__dict__`` is picklable). These classes can, in turn, have instances of other
+classes that will also be pickled based on their runtime representation. In
+practice this ties the output of pickle pretty tightly with the exact version of
+the code that generated it. On the other hand, by forcing clients to think
+carefully about how values are serialised, we make it much easier to reason
+about backward compatibility.
+
+Using python and MessagePack for the serialisation languages
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Learning a new syntax, even the syntax for a domain specific language is
+tedious. We made it a point to re-use python for our text
+representation. Similarly, MessagePack is one of the most widespread languages
+to save unstructured data. Most languages already have libraries to read
+MessagePack. Depending on how much custom types you use in your applications,
+reading back values written by *OTF* in another language should be relatively
+easy. The same definitely cannot be said for pickle.
+
+
+.. [ASDL97] The Zephyr abstract syntax description language [`PDF
+            <https://www.cs.princeton.edu/~appel/papers/asdl97.pdf>`_]
