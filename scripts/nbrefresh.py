@@ -8,8 +8,9 @@ import sys
 from typing import Iterator
 
 import click
-import nbformat  # type: ignore[import]
+import nbformat
 from nbconvert.preprocessors import ExecutePreprocessor  # type: ignore[import]
+from nbformat import notebooknode
 
 
 def diff(v1: str, v2: str, filename: str) -> str:
@@ -35,11 +36,11 @@ del _make_det
 
 
 def run(orig: str) -> str:
-    nb = nbformat.reads(orig, as_version=4)
+    nb = nbformat.reads(orig, as_version=4)  # type: ignore[no-untyped-call]
     ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
     # Make sure the run is deterministic by inserting a cell that monkeypatches
     # urandom
-    det_cell = nbformat.notebooknode.NotebookNode(
+    det_cell = notebooknode.NotebookNode(  # type: ignore[no-untyped-call]
         {
             "cell_type": "code",
             "id": "4f25faa9",
@@ -58,7 +59,7 @@ def run(orig: str) -> str:
         if "execution" in metadata:
             del metadata["execution"]
     del nb["metadata"]["language_info"]["version"]
-    cnt: str = nbformat.writes(nb)
+    cnt: str = nbformat.writes(nb)  # type: ignore[no-untyped-call]
     return cnt + "\n"
 
 
