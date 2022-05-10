@@ -1053,8 +1053,8 @@ class Suspension:
 
     @property
     def lineno(self) -> int | None:
-        """The line we are currently awaiting on (set to None if we haven't entered the
-        body of the function yet).
+        """The line we are currently awaiting on (set to None if we haven't
+        entered the body of the function yet).
 
         """
         if self.position == 0:

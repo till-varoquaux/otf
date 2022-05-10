@@ -9,6 +9,20 @@ The code was modified to add the features from the `QuickC-- implementation
 
 """
 
+# IPython has an implementation of linding's pretty printer which a lot further
+# from the article:
+#
+#   https://github.com/ipython/ipython/blob/master/IPython/lib/pretty.py
+#
+# In turn it's based on:
+#
+#   https://github.com/ruby/ruby/blob/master/lib/prettyprint.rb
+#
+# The nice thing about this implementation is that greedily pretty prints the
+# document as it is being created. It doesn't have the vgrp and hgrp and it's
+# far enough from Linding's article that it's not obvious the semantic has been
+# preserved.
+
 from __future__ import annotations
 
 import dataclasses
@@ -203,55 +217,6 @@ def fgrp(doc: Doc) -> Doc:
     return DocGroup(Mode.FILL, doc)
 
 
-# type sdoc =
-# | SNil
-# | SText of string * sdoc
-# | SLine of int * sdoc (* newline + spaces *)
-
-
-class SDoc:
-    pass
-
-
-class SNil(SDoc):
-    pass
-
-
-SNIL: SDoc = SNil()
-
-
-@dataclasses.dataclass(slots=True)
-class SText(SDoc):
-    text: str
-    doc: SDoc
-
-
-@dataclasses.dataclass(slots=True)
-class SLine(SDoc):
-    indent: int
-    doc: SDoc
-
-
-# let rec sdocToString = function
-#   | SNil -> ""
-#   | SText(s,d) -> s ^ sdocToString d
-#   | SLine(i,d) -> let prefix = String.make i ’ ’
-#                   in nl ^ prefix ^ sdocToString d
-
-
-def render_sdoc(sdoc: SDoc, out: TextIO) -> None:
-    while True:
-        match sdoc:
-            case SText(s, sdoc):
-                out.write(s)
-            case SLine(i, sdoc):
-                out.write("\n")
-                out.write(" " * i)
-            case _:
-                assert isinstance(sdoc, SNil)
-                return
-
-
 # NOTE: OCaml's list are linked list. The algorithm does a lot of
 # deconstructing/reconstructing of head::tail. If we used normal python lists
 # we'd convert a lot of O(1) operation in O(n) operations.
@@ -277,27 +242,35 @@ class LL:
 
 
 def fits(w: int, elts: LL | None) -> bool:
-    if w < 0:
-        return False
-    match elts:
-        case None:
-            return True
-        case LL(_, m, DocNil(), z):
-            return fits(w, z)
-        case LL(i, m, DocCons(x, y), z):
-            return fits(w, LL(i, m, x, LL(i, m, y, z)))
-        case LL(i, m, DocNest(j, x), z):
-            return fits(w, LL(i + j, m, x, z))
-        case LL(_, m, DocText(s), z):
-            return fits(w - len(s), z)
-        case LL(_, Mode.FLAT, DocBREAK(s), z):
-            return fits(w - len(s), z)
-        case LL(_, Mode.FILL | Mode.BREAK, DocBREAK(_), _):
-            return True
-        case LL(i, _, DocGroup(_, x), z):
-            return fits(w, LL(i, Mode.FLAT, x, z))
-    # unreachable
-    assert False, elts  # pragma: no cover
+    while w >= 0:
+        match elts:
+            case None:
+                return True
+            case LL(_, m, DocNil(), z):
+                elts = z
+                continue
+            case LL(i, m, DocCons(x, y), z):
+                elts = LL(i, m, x, LL(i, m, y, z))
+                continue
+            case LL(i, m, DocNest(j, x), z):
+                elts = LL(i + j, m, x, z)
+                continue
+            case LL(_, m, DocText(s), z):
+                w -= len(s)
+                elts = z
+                continue
+            case LL(_, Mode.FLAT, DocBREAK(s), z):
+                w -= len(s)
+                elts = z
+                continue
+            case LL(_, Mode.FILL | Mode.BREAK, DocBREAK(_), _):
+                return True
+            case LL(i, _, DocGroup(_, x), z):
+                elts = LL(i, Mode.FLAT, x, z)
+                continue
+        # unreachable
+        assert False, elts  # pragma: no cover
+    return False
 
 
 # Note: This reference code is from the qc-- code. It's nearly the same as the
@@ -305,8 +278,8 @@ def fits(w: int, elts: LL | None) -> bool:
 # vgrp and hgrp). It's also written in CPS form to avoid stack overflows.
 #
 # CPython does not have tail call optimisation so it makes no sense to use
-# CPS. We could eventually rewrite `format` to use a stack and avoid the stack
-# blow outs.
+# CPS. Instead we rewrote the function as a loop and replaced `cons` and `consl`
+# with direct writes to out
 #
 # let cons  s post z = post (SText (s, z))
 # let consl i post z = post (SLine (i, z))
@@ -330,41 +303,68 @@ def fits(w: int, elts: LL | None) -> bool:
 #     | (i,m,DocGroup(GAuto, x))  :: z -> if fits (w-k) ((i,Flat,x)::z)
 #                                         then format w k ((i,Flat ,x)::z) post
 #                                         else format w k ((i,Break,x)::z) post
-def format(w: int, k: int, elts: LL | None) -> SDoc:
-    match elts:
-        case None:
-            return SNIL
-        case LL(i, m, DocNil(), z):
-            return format(w, k, z)
-        case LL(i, m, DocCons(x, y), z):
-            return format(w, k, LL(i, m, x, LL(i, m, y, z)))
-        case LL(i, m, DocNest(j, x), z):
-            return format(w, k, LL(i + j, m, x, z))
-        case LL(i, m, DocText(s), z):
-            return SText(s, format(w, k + len(s), z))
-        case LL(i, Mode.FLAT, DocBREAK(s), z):
-            return SText(s, format(w, k + len(s), z))
-        case LL(i, Mode.FILL, DocBREAK(s), z):
-            if fits(w - k - len(s), z):
-                return SText(s, format(w, (k + len(s)), z))
-            else:
-                return SLine(i, format(w, i, z))
-        case LL(i, Mode.BREAK, DocBREAK(s), z):
-            return SLine(i, format(w, i, z))
-        case LL(i, _, DocGroup(Mode.FLAT | Mode.FILL | Mode.BREAK as m, x), z):
-            return format(w, k, LL(i, m, x, z))
-        case LL(i, _, DocGroup(Mode.AUTO, x), z):
-            if fits(w - k, LL(i, Mode.FLAT, x, z)):
-                return format(w, k, LL(i, Mode.FLAT, x, z))
-            else:
-                assert not isinstance(x, DocBREAK)
-                return format(w, k, LL(i, Mode.BREAK, x, z))
-    # unreachable
-    assert False  # pragma: no cover
+def format(w: int, k: int, elts: LL | None, out: TextIO) -> None:
+    def sline(i: int) -> None:
+        out.write("\n")
+        out.write(" " * i)
+
+    stext = out.write
+
+    while elts is not None:
+        match elts:
+            case LL(i, m, DocNil(), z):
+                elts = z
+                continue
+            case LL(i, m, DocCons(x, y), z):
+                elts = LL(i, m, x, LL(i, m, y, z))
+                continue
+            case LL(i, m, DocNest(j, x), z):
+                elts = LL(i + j, m, x, z)
+                continue
+            case LL(i, m, DocText(s), z):
+                stext(s)
+                k += len(s)
+                elts = z
+                continue
+            case LL(i, Mode.FLAT, DocBREAK(s), z):
+                stext(s)
+                k += len(s)
+                elts = z
+                continue
+            case LL(i, Mode.FILL, DocBREAK(s), z):
+                if fits(w - k - len(s), z):
+                    stext(s)
+                    k += len(s)
+                    elts = z
+                    continue
+                else:
+                    sline(i)
+                    k = i
+                    elts = z
+                    continue
+            case LL(i, Mode.BREAK, DocBREAK(s), z):
+                sline(i)
+                k = i
+                elts = z
+                continue
+            case LL(
+                i, _, DocGroup(Mode.FLAT | Mode.FILL | Mode.BREAK as m, x), z
+            ):
+                elts = LL(i, m, x, z)
+                continue
+            case LL(i, _, DocGroup(Mode.AUTO, x), z):
+                if fits(w - k, LL(i, Mode.FLAT, x, z)):
+                    elts = LL(i, Mode.FLAT, x, z)
+                    continue
+                else:
+                    assert not isinstance(x, DocBREAK)
+                    elts = LL(i, Mode.BREAK, x, z)
+                    continue
+        # unreachable
+        assert False  # pragma: no cover
 
 
 def to_string(width: int, doc: Doc) -> str:
     out = io.StringIO()
-    sdoc = format(width, 0, LL(0, Mode.FLAT, DocGroup(Mode.AUTO, doc)))
-    render_sdoc(sdoc, out)
+    format(width, 0, LL(0, Mode.FLAT, DocGroup(Mode.AUTO, doc)), out)
     return out.getvalue()
