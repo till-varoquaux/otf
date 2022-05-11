@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+rm -rf "$(poetry env info --path)"
+poetry install -E msgpack
+poetry export\
+ -f requirements.txt\
+ --output .tox_requirements.txt\
+ --dev\
+ -E msgpack\
+ --without-hashes
