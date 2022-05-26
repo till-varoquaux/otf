@@ -154,6 +154,13 @@ def test_dump_text():
     assert pack.dump_text(ackerman, indent=4) == PRETTY_ACK
 
 
+def test_exc():
+    assert pack.dump_text(ValueError("pb")) == "ValueError('pb')"
+    exc = pack.load_text("ValueError('pb')")
+    assert isinstance(exc, ValueError)
+    assert str(exc) == "pb"
+
+
 def test_get_import(monkeypatch):
     assert pack.text._get_import("otf.Function") == "otf"
     assert pack.text._get_import("otf.compiler.Function") == "otf.compiler"

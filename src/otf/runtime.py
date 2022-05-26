@@ -18,6 +18,7 @@ __all__ = (
     "Task",
 )
 
+
 # For the docstring
 dump_text = pack.dump_text
 

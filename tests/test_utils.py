@@ -64,3 +64,5 @@ def test_get_name():
     # builtin names get compressed
     assert utils.get_locate_name(id) == "id"
     assert utils.locate("id") == id
+
+    assert utils.get_locate_name(ValueError) == "ValueError"

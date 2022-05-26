@@ -47,6 +47,10 @@ class Future(Generic[T]):
     def uid(self) -> str:
         return f"{self.scheduler_id}:{self.local_id}"
 
+    def result(self) -> T:
+        context = _CurrentContext.get()
+        return context.wait(self)
+
 
 def future(uid: str, task: runtime.Task[T]) -> Future[T]:
     """Function used by pack to recreate the futures..."""
@@ -239,12 +243,10 @@ class Scheduler:
         while isinstance(step, compiler.Suspension):
             trace = Checkpoint(parent=trace, suspension=step)
             step = pack.copy(step)
-            fut = step.awaiting
-            if fut is None:
-                value = None
-            else:
-                value = self.wait(fut)
-            step = step.resume(value)
+            # fut = step.awaiting
+            # if fut is not None:
+            #     self.wait(fut)
+            step = step.resume()
         return Result(
             parent=trace,
             value=step,

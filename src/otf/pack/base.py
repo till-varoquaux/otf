@@ -66,7 +66,13 @@ def pickle_call(
 
 
 @typing.overload
-def register(function: Reducer[T], /) -> Reducer[T]:  # pragma: no cover
+def register(
+    function: Reducer[T],
+    /,
+    *,
+    type: Type[T] | None = None,
+    pickle: bool = False,
+) -> Reducer[T]:  # pragma: no cover
     ...
 
 
@@ -150,6 +156,34 @@ def _explode_tuple(t: tuple[T, ...]) -> Reduced[tuple[T, ...]]:
 @register
 def _explode_set(s: set[T]) -> Reduced[set[T]]:
     return set, (list(s),), {}
+
+
+def _red_ex(e: T) -> Reduced[T]:
+    red = e.__reduce__()
+    assert not isinstance(red, str)
+    typ, args = red
+    assert issubclass(typ, Exception)
+    return typ, args, {}
+
+
+register(_red_ex, type=ArithmeticError)
+register(_red_ex, type=AssertionError)
+register(_red_ex, type=AttributeError)
+register(_red_ex, type=BufferError)
+register(_red_ex, type=EOFError)
+register(_red_ex, type=ImportError)
+register(_red_ex, type=LookupError)
+register(_red_ex, type=MemoryError)
+register(_red_ex, type=NameError)
+register(_red_ex, type=OSError)
+register(_red_ex, type=ReferenceError)
+register(_red_ex, type=RuntimeError)
+register(_red_ex, type=StopAsyncIteration)
+register(_red_ex, type=StopIteration)
+register(_red_ex, type=SyntaxError)
+register(_red_ex, type=SystemError)
+register(_red_ex, type=TypeError)
+register(_red_ex, type=ValueError)
 
 
 MISSING = object()

@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     Mapping,
     ParamSpec,
+    Protocol,
     TypedDict,
     TypeVar,
 )
@@ -25,6 +26,7 @@ from typing import (
 from . import analyze, ast_utils, pack, parser, utils
 
 T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
 P = ParamSpec("P")
 
 FunctionType = TypeVar("FunctionType", bound=Callable[..., Any])
@@ -36,6 +38,11 @@ _OtfEnv: contextvars.ContextVar[Environment] = contextvars.ContextVar(
 _OtfWorkflow: contextvars.ContextVar[
     Workflow[Any, Any]
 ] = contextvars.ContextVar("OtfWorkflow")
+
+
+class Future(Protocol[T_co]):
+    def result(self) -> T_co:  # pragma: no cover
+        ...
 
 
 def _mk_arguments(sig: inspect.Signature) -> ast.arguments:
@@ -510,9 +517,6 @@ class PrivateState(WorkflowState):
     pass
 
 
-AssignTemplate = Template("__var_dest = _otf_val")
-
-
 class PublicState(WorkflowState):
     """State that can be jumped to from outside the state machines
 
@@ -521,7 +525,24 @@ class PublicState(WorkflowState):
 
     """
 
-    assign: ast.expr | None
+
+class OriginState(WorkflowState):
+    pass
+
+
+AwaitTemplate = Template("_otf_fut.result()")
+
+
+class ResumeState(PublicState):
+    """State that can be jumped to from outside the state machines
+
+    These states are either the node or places where we resume from an ``await``
+    statement.
+
+    """
+
+    _await: ast.Await
+    targets: list[ast.expr] | None
 
     def __init__(
         self,
@@ -529,7 +550,8 @@ class PublicState(WorkflowState):
         idx: int,
         break_state: WorkflowState | None,
         continue_state: WorkflowState | None,
-        assign: ast.expr | None,
+        origin: ast.Await,
+        targets: list[ast.expr] | None,
     ) -> None:
         super().__init__(
             filename,
@@ -537,13 +559,23 @@ class PublicState(WorkflowState):
             break_state=break_state,
             continue_state=continue_state,
         )
-        self.assign = assign
+        self._await = origin
+        self.targets = targets
 
     def get_body(self) -> list[ast.stmt]:
         body = super().get_body()
-        if self.assign is not None:
-            return [*AssignTemplate(self.assign, dest=self.assign), *body]
-        return body
+        stmt = AwaitTemplate(self._await)[0]
+        if self.targets is not None:
+            assert isinstance(stmt, ast.Expr)
+            stmt = ast.Assign(
+                targets=self.targets,
+                value=stmt.value,
+                lineno=self._await.lineno,
+                col_offset=self._await.col_offset,
+                end_lineno=self._await.end_lineno,
+                end_col_offset=self._await.end_col_offset,
+            )
+        return [stmt, *body]
 
 
 @dataclasses.dataclass
@@ -594,7 +626,7 @@ SuspendTemplate = Template(
 @dataclasses.dataclass
 class Suspend(Transition):
     awaiting: ast.expr
-    dest: PublicState
+    dest: ResumeState
 
     def emit(self) -> list[ast.stmt]:
         return SuspendTemplate(
@@ -622,18 +654,20 @@ class _FsmState:
     def filename(self) -> str:
         return self.src.filename
 
-    def mk_public_state(
+    def mk_resume_state(
         self,
-        assign: ast.expr | None,
+        origin: ast.Await,
+        targets: list[ast.expr] | None,
         break_state: WorkflowState | None,
         continue_state: WorkflowState | None,
-    ) -> PublicState:
+    ) -> ResumeState:
         idx = self.public_states
         self.public_states += 1
-        state = PublicState(
+        state = ResumeState(
             filename=self.filename,
             idx=idx,
-            assign=assign,
+            origin=origin,
+            targets=targets,
             break_state=break_state,
             continue_state=continue_state,
         )
@@ -675,9 +709,9 @@ class FsmCompiler(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def public_state(
-        self, assign: ast.expr | None = None
-    ) -> PublicState:  # pragma: no cover
+    def resume_state(
+        self, origin: ast.Await, targets: list[ast.expr] | None = None
+    ) -> ResumeState:  # pragma: no cover
         ...
 
     @abc.abstractmethod
@@ -700,18 +734,18 @@ class FsmCompiler(abc.ABC):
             current.append(node)
             return current
         match node:
-            case ast.Assign(targets=targets, value=ast.Await(value=value)):
+            case ast.Assign(targets=targets, value=ast.Await() as awaited):
                 assert len(targets) == 1, ast.unparse(node)
                 return self.emit_suspend(
-                    target=targets[0], value=value, origin=current
+                    targets=targets, awaited=awaited, origin=current
                 )
-            case ast.AnnAssign(target=target, value=ast.Await(value=value)):
+            case ast.AnnAssign(target=target, value=ast.Await() as awaited):
                 return self.emit_suspend(
-                    target=target, value=value, origin=current
+                    targets=[target], awaited=awaited, origin=current
                 )
-            case ast.Expr(ast.Await(value=value)):
+            case ast.Expr(ast.Await() as awaited):
                 return self.emit_suspend(
-                    target=None, value=value, origin=current
+                    targets=None, awaited=awaited, origin=current
                 )
             case ast.If(test=test, body=body, orelse=orelse):
                 self.assert_sync(test)
@@ -736,7 +770,8 @@ class FsmCompiler(abc.ABC):
                 self.assert_sync(test)
                 if orelse:
                     # Even guido thinks this feature was not worth having:
-                    # https://mail.python.org/pipermail/python-ideas/2009-October/006157.html
+                    # https://mail.python.org/pipermail/python-ideas/
+                    # 2009-October/006157.html
                     utils.syntax_error(
                         msg="While ... Else .. not supported",
                         filename=self.filename,
@@ -794,10 +829,13 @@ class FsmCompiler(abc.ABC):
             )
 
     def emit_suspend(
-        self, target: ast.expr | None, value: ast.expr, origin: CodeBlock
-    ) -> PublicState:
-        dest = self.public_state(assign=target)
-        origin.seal(Suspend(awaiting=value, dest=dest))
+        self,
+        targets: list[ast.expr] | None,
+        awaited: ast.Await,
+        origin: CodeBlock,
+    ) -> ResumeState:
+        dest = self.resume_state(origin=awaited, targets=targets)
+        origin.seal(Suspend(awaiting=awaited.value, dest=dest))
         return dest
 
 
@@ -811,9 +849,14 @@ class LoopCompiler(FsmCompiler):
     def filename(self) -> str:
         return self.fsm.src.filename
 
-    def public_state(self, assign: ast.expr | None = None) -> PublicState:
-        return self.fsm.mk_public_state(
-            assign=assign, break_state=self.stop, continue_state=self.start
+    def resume_state(
+        self, origin: ast.Await, targets: list[ast.expr] | None = None
+    ) -> ResumeState:
+        return self.fsm.mk_resume_state(
+            origin=origin,
+            break_state=self.stop,
+            continue_state=self.start,
+            targets=targets,
         )
 
     def private_state(self) -> PrivateState:
@@ -839,15 +882,26 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
         super().__init__(
             src=src,
             environment=environment,
-            states=[],
-            public_states=0,
+            states=[
+                OriginState(
+                    filename=src.filename,
+                    idx=0,
+                    break_state=None,
+                    continue_state=None,
+                )
+            ],
+            public_states=1,
             private_states=0,
         )
-        self.public_state()
 
-    def public_state(self, assign: ast.expr | None = None) -> PublicState:
-        return self.mk_public_state(
-            assign=assign, break_state=None, continue_state=None
+    def resume_state(
+        self, origin: ast.Await, targets: list[ast.expr] | None = None
+    ) -> ResumeState:
+        return self.mk_resume_state(
+            origin=origin,
+            targets=targets,
+            break_state=None,
+            continue_state=None,
         )
 
     def private_state(self) -> PrivateState:
@@ -910,7 +964,7 @@ class WorkflowCompiler(_FsmState, FsmCompiler):
                         name=name,
                         kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
                     )
-                    for name in ("_otf_variables", "_otf_pos", "_otf_val")
+                    for name in ("_otf_variables", "_otf_pos", "_otf_fut")
                 ]
             ),
             statements=tuple(body),
@@ -952,13 +1006,16 @@ class Workflow(Generic[P, T]):
         )
 
     def _resume(
-        self, variables: dict[str, Any], position: int, value: Any
+        self,
+        variables: dict[str, Any],
+        position: int,
+        future: Future[Any] | None,
     ) -> T | Suspension:
         env_token = _OtfEnv.set(self.environment)
         workflow_token = _OtfWorkflow.set(self)
         try:
             return self._compiled(  # type: ignore
-                _otf_variables=variables, _otf_pos=position, _otf_val=value
+                _otf_variables=variables, _otf_pos=position, _otf_fut=future
             )
         finally:
             _OtfEnv.reset(env_token)
@@ -971,19 +1028,19 @@ class Workflow(Generic[P, T]):
         return Suspension._make(
             position=0,
             variables=bound.arguments,
-            awaiting=None,
             workflow=self,
         )
 
 
-class ExplodedSuspension(TypedDict, total=True):
-    """A serializable representation of a Suspension"""
-
+class _ExplodedSuspension(TypedDict, total=True):
     code: str
     position: int
     variables: dict[str, Any]
-    awaiting: Any
     environment: Environment
+
+
+class ExplodedSuspension(_ExplodedSuspension, total=False):
+    awaiting: Future[Any]
 
 
 @dataclasses.dataclass
@@ -997,7 +1054,7 @@ class Suspension:
 
     position: int
     variables: dict[str, Any]
-    awaiting: Any
+    awaiting: Future[Any] | None
     workflow: Workflow[Any, Any]
 
     def __init__(
@@ -1007,7 +1064,7 @@ class Suspension:
         position: int,
         environment: Environment,
         variables: dict[str, Any],
-        awaiting: Any,
+        awaiting: Future[Any] | None = None,
     ) -> None:
         self.position = position
         self.variables = variables
@@ -1025,8 +1082,8 @@ class Suspension:
     def _make(
         position: int,
         variables: dict[str, Any],
-        awaiting: Any,
         workflow: Workflow[Any, Any],
+        awaiting: Future[Any] | None = None,
     ) -> Suspension:
         # We want the default constructor to be the one used by the
         # serialisation code (to make dump_text pretty).
@@ -1038,9 +1095,11 @@ class Suspension:
         res.workflow = workflow
         return res
 
-    def resume(self, value: Any) -> Any:
+    def resume(self) -> Any:
         return self.workflow._resume(
-            position=self.position, variables=self.variables, value=value
+            position=self.position,
+            variables=self.variables,
+            future=self.awaiting,
         )
 
     @property
@@ -1070,10 +1129,11 @@ def _explode_suspension(
     exploded: ExplodedSuspension = {
         "code": suspension.code,
         "position": suspension.position,
-        "awaiting": suspension.awaiting,
         "variables": suspension.variables,
         "environment": suspension.environment,
     }
+    if suspension.awaiting is not None:
+        exploded["awaiting"] = suspension.awaiting
     return Suspension, (), typing.cast(dict[str, Any], exploded)
 
 

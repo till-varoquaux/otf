@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
+import operator
 import pickle
 import textwrap
 from unittest import mock
 
 import pytest
 
-from otf import compiler, pack, parser
+from otf import compiler, pack, parser, runtime
 
 from . import utils
+
+
+def ident(x):
+    return x
 
 
 @pytest.mark.parametrize(
@@ -243,7 +249,7 @@ def test_loop_rewriter():
 
 
 COMPILED = r"""
-def wf(_otf_variables, _otf_pos, _otf_val):
+def wf(_otf_variables, _otf_pos, _otf_fut):
     if 'a' in _otf_variables:
         a = _otf_variables['a']
     if 'a_' in _otf_variables:
@@ -262,16 +268,17 @@ def wf(_otf_variables, _otf_pos, _otf_val):
                 (a_, b_) = (f1(x), f2(y))
                 return _otf_suspend(position=1, variables=locals(), awaiting=b_)
             case 1:
-                b = _otf_val
+                b = _otf_fut.result()
                 return _otf_suspend(position=2, variables=locals(), awaiting=a_)
             case 2:
-                a = _otf_val
+                a = _otf_fut.result()
                 return _otf_suspend(
                   position=3,
                   variables=locals(),
                   awaiting=sleep(5)
                 )
             case 3:
+                _otf_fut.result()
                 return a + b
 """
 
@@ -296,7 +303,7 @@ def test_compile_workflow():
 
 
 COMPILED_IF = """
-def wf(_otf_variables, _otf_pos, _otf_val):
+def wf(_otf_variables, _otf_pos, _otf_fut):
     if 'x' in _otf_variables:
         x = _otf_variables['x']
     if 'y' in _otf_variables:
@@ -314,7 +321,7 @@ def wf(_otf_variables, _otf_pos, _otf_val):
                     _otf_pos = -1
                     continue
             case 1:
-                x = _otf_val
+                x = _otf_fut.result()
                 _otf_pos = -1
                 continue
             case -1:
@@ -340,7 +347,7 @@ def test_compile_workflow_if():
 
 
 EXPECTED_IMPLICIT_RETURN = """
-def wf(_otf_variables, _otf_pos, _otf_val):
+def wf(_otf_variables, _otf_pos, _otf_fut):
     if 'x' in _otf_variables:
         x = _otf_variables['x']
     if 'y' in _otf_variables:
@@ -354,6 +361,7 @@ def wf(_otf_variables, _otf_pos, _otf_val):
                     awaiting=x(y)
                 )
             case 1:
+                _otf_fut.result()
                 return
 """
 
@@ -395,7 +403,7 @@ while True:
         case -2:
             return
         case 1:
-            v = _otf_val
+            v = _otf_fut.result()
             if v:
                 _otf_pos = -2
                 continue
@@ -461,39 +469,85 @@ def test_workflow_bad_await():
         e.workflow(wf)
 
 
-# Dummy scheduler to make testing easier
 class future:
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, fn, *args, **kwargs):
+        self._thunk = functools.partial(fn, *args, **kwargs)
+        self._result = None
+        self._exception = None
+
+    def result(self):
+        if self._thunk is not None:
+            try:
+                self._result = self._thunk()
+            except Exception as e:
+                self._exception = e
+            self._thunk = None
+        if self._exception:
+            raise self._exception
+        return self._result
 
 
 def run(wf, *args, **kwargs):
     if not isinstance(wf, compiler.Workflow):
-        e = compiler.Environment(future=future)
+        e = compiler.Environment(
+            future=future,
+            operator=runtime.NamedReference(operator),
+            ident=ident,
+        )
         wf = e.workflow(wf)
     trace = [wf.freeze(*args, **kwargs)]
     while isinstance(trace[-1], compiler.Suspension):
         copied = pickle.loads(pickle.dumps(trace[-1]))
-        if copied.awaiting is None:
-            value = None
-        else:
-            value = copied.awaiting.value
-        trace.append(copied.resume(value))
+        trace.append(copied.resume())
     return trace
 
 
 def test_simple_workflow():
     async def wf(x, y):
-        a_, b_ = future(x * 2), future(y * 3)  # noqa: F821
+        a_, b_ = future(operator.mul, x, 2), future(
+            operator.mul, y, 3
+        )  # noqa: F821
         b = await b_
         a = await a_
         return a + b
 
     trace = run(wf, x=5, y=6)
     assert trace[0].lineno is None
-    assert trace[1].lineno == 2
-    assert trace[2].lineno == 3
+    assert trace[1].lineno == 4
+    assert trace[2].lineno == 5
     assert trace[3] == 28
+
+
+def test_exception():
+    async def wf():
+        blow_up = future(operator.floordiv, 5, 0)
+        await blow_up
+        return 5
+
+    with pytest.raises(ZeroDivisionError) as exc_info:
+        run(wf)
+
+    # we can't rely on function name or source file because of the mangling done
+    # by the compiler.
+    statements = [str(entry.statement).strip() for entry in exc_info.traceback]
+    assert "await blow_up" in statements
+
+
+def test_exception2():
+    async def wf():
+        numerator = 5
+        denominator = 0
+        x, y = await future(operator.floordiv, numerator, denominator)
+        return 5
+
+    with pytest.raises(ZeroDivisionError) as exc_info:
+        run(wf)
+
+    statements = [str(entry.statement).strip() for entry in exc_info.traceback]
+    assert (
+        "x, y = await future(operator.floordiv, numerator, denominator)"
+        in statements
+    )
 
 
 def test_remove_es():
@@ -501,7 +555,7 @@ def test_remove_es():
         [*chars] = inpt
         res = ""
         while chars:
-            c = await future(chars.pop(0))
+            c = await future(ident, chars.pop(0))
             if c == "e":
                 continue
             res += c
@@ -522,7 +576,7 @@ def test_find_squares():
         while i < limit:
             j = 0
             while True:
-                j_squared = await future(j * j)
+                j_squared = await future(operator.mul, j, j)
                 if j_squared > i:
                     break
                 j += 1
